@@ -1,0 +1,17 @@
+{
+  "read_cold_k=0": "3090",
+  "read_cold_k=10": "36844",
+  "read_cold_k=5": "18936",
+  "read_warm_k=0": "1090",
+  "read_warm_k=10": "7433",
+  "read_warm_k=5": "4437",
+  "update_batch_k=0,n=0": "21830",
+  "update_batch_k=0,n=10": "166502",
+  "update_batch_k=0,n=5": "95278",
+  "update_batch_n=5,k=10": "362596",
+  "update_batch_n=5,k=5": "228434",
+  "update_direct_k=0": "27876",
+  "update_direct_k=10": "88461",
+  "update_direct_k=5": "58029",
+  "verify": "933906"
+}
