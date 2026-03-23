@@ -107,7 +107,7 @@ Batching breaks even at ~2 updates and saves increasingly more as n grows.
 
 ## Block Builder Integration
 
-Block builders accept these transactions via `eth_sendBundle` or `eth_sendRawTransaction`. The priority update must be included as a transaction in the bundle.
+Block builders accept these transactions via `eth_sendBundle`. The priority update must be included as a transaction in the bundle.
 If another prio update arrives at the block builder, it replaces the previous one. Only one priority update can land in the block and the builder verifies that it's the latest that it received.
 
 ### Direct updates using `updateState`
