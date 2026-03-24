@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Priority Update Registry</title>
+<style>
+body { font-family: system-ui, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; line-height: 1.6; color: #1a1a1a; }
+h1 { border-bottom: 2px solid #333; padding-bottom: 8px; }
+h2 { margin-top: 48px; }
+code { background: #f0f0f0; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
+.highlight { background: #fff3cd; padding: 12px; border-left: 3px solid #ffc107; margin: 16px 0; }
+.mermaid { margin: 24px 0; }
+.block-layout { border: 2px solid #333; border-radius: 4px; margin: 24px 0; overflow: hidden; }
+.block-header { background: #333; color: #fff; padding: 6px 12px; font-weight: bold; }
+.tx { padding: 10px 12px; border-bottom: 1px solid #ddd; }
+.tx:last-child { border-bottom: none; }
+.tx-update { background: #fff3cd; }
+.tx-user { background: #d4edda; }
+table { border-collapse: collapse; margin: 16px 0; }
+th, td { border: 1px solid #ddd; padding: 8px 12px; text-align: left; }
+th { background: #f0f0f0; }
+</style>
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+</script>
+</head>
+<body>
+
+<h1>Priority Update Registry</h1>
+<p><em>A shared on-chain registry for block-scoped state updates, designed for builder integration.</em></p>
+
+<h2>Problem</h2>
+
+<p>Many contracts depend on fresh state that must be updated every block: price feeds, oracle data.</p>
+
+<p>Constraints:</p>
+<ul>
+  <li>Updates should only land when they are actually used.</li>
+  <li>Updates must land <em>before</em> the transactions that use them. The contract needs fresh state at the time it is called.</li>
+</ul>
+
+<p>This means the block builder needs to figure out, during simulation, that a transaction needs an update, and then place that update in front of it.</p>
+
+<h2>Proposed Solution</h2>
+
+<p><strong>One canonical registry contract</strong> where all priority updates live.</p>
+
+<ul>
+  <li><strong>Standardized:</strong> Builders learn one interface</li>
+  <li><strong>Composable:</strong> Multiple updates from different protocols can be batched into a single transaction</li>
+  <li><strong>Block-scoped:</strong> Updates are only valid for the current block (enforced by block timestamp), automatically stale after</li>
+  <li><strong>Predictable storage:</strong> Fixed layout means builders can apply updates directly to state without executing arbitrary code</li>
+  <li><strong>No execution risk:</strong> The registry only writes to its own storage. No frontrunning, no complex execution</li>
+</ul>
+
+<h2>How Updaters Submit Updates to the Builder</h2>
+
+<p>Updaters sign priority updates and send them to the builder. The builder keeps a pool of pending updates, one per target contract (latest wins).</p>
+
+<pre class="mermaid">
+flowchart TD
+    A["Updater A\n(price feed)"] -->|signed update\nfor Contract X| Builder
+    B["Updater B\n(oracle data)"] -->|signed update\nfor Contract Y| Builder
+
+    Builder["Block Builder"]
+
+    Builder --> Pool
+
+    Pool["Pending Updates Pool\n\nContract X ← latest from A\nContract Y ← latest from B"]
+
+    style Builder fill:#e8e8e8,stroke:#333
+    style Pool fill:#f8f8f8,stroke:#999
+</pre>
+
+<p>Updates arrive via <code>eth_sendBundle</code>. The builder controls inclusion and never lets update transactions land on their own.</p>
+
+<h2>How the Builder Includes Updates in a Block</h2>
+
+<p>When the builder simulates a user transaction, it watches for calls to the registry. If a contract reads from the registry, the builder inserts the update transaction before the user transaction.</p>
+
+<p>In this example, Contract X uses the registry for fresh price data.</p>
+
+<pre class="mermaid">
+sequenceDiagram
+    participant EOA
+    participant A as Contract A
+    participant X as Contract X
+    participant R as Registry
+
+    EOA->>A: call
+    activate A
+    A->>X: call
+    activate X
+    X->>R: getState()
+    activate R
+    Note over R: ⚡ Builder detects this read!
+    R-->>X: fresh state
+    deactivate R
+    deactivate X
+    deactivate A
+</pre>
+
+<p>Final block ordering after the builder inserts the update:</p>
+
+<div class="block-layout">
+  <div class="block-header">Block</div>
+  <div class="tx">tx 0: ...</div>
+  <div class="tx">tx 1: ...</div>
+  <div class="tx tx-update">tx 2: Update Contract X (inserted by builder, writes fresh state to registry)</div>
+  <div class="tx tx-user">tx 3: User Transaction — Contract A → Contract X → Registry (reads fresh state ✓)</div>
+  <div class="tx">tx 4: ...</div>
+</div>
+
+<div class="highlight">
+  The builder does not need to execute arbitrary update logic. Because the registry has a fixed storage layout, the builder can apply the update directly to state. It just writes the known values to the known slots. The update transaction is then placed before the user transaction so on-chain execution matches the pre-applied state.
+</div>
+
+<h2>Batching</h2>
+
+<p>When multiple contracts use updates, the builder can batch all of them into a single transaction at the top of the block. Since update transactions only write to the registry and have no dependencies on other state, they can always go first.</p>
+
+<div class="block-layout">
+  <div class="block-header">Block</div>
+  <div class="tx tx-update">tx 0: Batched update for Contract X and Contract Y (single tx, top of block)</div>
+  <div class="tx">tx 1: ...</div>
+  <div class="tx tx-user">tx 2: User tx — calls Contract X (reads fresh state ✓)</div>
+  <div class="tx">tx 3: ...</div>
+  <div class="tx tx-user">tx 4: User tx — calls Contract Y (reads fresh state ✓)</div>
+  <div class="tx">tx 5: ...</div>
+</div>
+
+<h2>Summary</h2>
+
+<ol>
+  <li>Builder starts simulating a user transaction</li>
+  <li>Deep in the callstack, some contract calls <code>Registry.getState()</code> for Contract X</li>
+  <li>Builder intercepts this storage read and checks: is there a pending update for Contract X?</li>
+  <li>If yes, builder applies the update values directly to registry storage slots (no tx execution needed for simulation)</li>
+  <li>Simulation continues with fresh state, <code>getState()</code> returns the updated values</li>
+  <li>After simulation succeeds, builder inserts the actual update transaction before the user transaction in the block</li>
+  <li>On-chain execution replays the same sequence: update tx writes fresh state, then user tx reads it</li>
+</ol>
+
+<h2>Costs</h2>
+
+<p>Each contract gets 8 bytes plus k additional 32-byte slots of state. Gas costs scale linearly with k.</p>
+
+<table>
+  <tr><th>Operation</th><th>Gas</th></tr>
+  <tr><td>Direct update</td><td>21000 + 6876 + k × 5212</td></tr>
+  <tr><td>Batched update (n updates)</td><td>21000 + 830 + n × (13331 + k × 5236)</td></tr>
+  <tr><td>Read (cold)</td><td>3090 + k × 2269</td></tr>
+  <tr><td>Read (warm)</td><td>1090 + k × 269</td></tr>
+</table>
+
+<p>Batching vs individual transactions (k = 0):</p>
+
+<table>
+  <tr><th>Updates</th><th>Individual (per update)</th><th>Batched (per update)</th><th>Savings</th></tr>
+  <tr><td>1</td><td>27,876</td><td>35,161</td><td>-26%</td></tr>
+  <tr><td>2</td><td>27,876</td><td>24,246</td><td>14%</td></tr>
+  <tr><td>5</td><td>27,876</td><td>17,697</td><td>37%</td></tr>
+  <tr><td>10</td><td>27,876</td><td>15,514</td><td>45%</td></tr>
+</table>
+
+<p>Batching breaks even at ~2 updates and saves more as the number grows.</p>
+
+</body>
+</html>
