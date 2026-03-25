@@ -55,6 +55,28 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
   <li><strong>No execution risk:</strong> The registry only writes to its own storage. No frontrunning, no complex execution</li>
 </ul>
 
+<h2>Interface</h2>
+
+<p>Each target's state is a list of slots: the first slot holds 8 bytes, followed by <em>k</em> additional 32-byte slots.</p>
+
+<p>The registry exposes two core operations:</p>
+
+<p><strong>Updating state.</strong></p>
+
+<p><code>updateState(address target, uint256 blockTimestamp, uint256[] slots)</code></p>
+
+<p>An authorized updater calls this to write fresh state for a target contract. The <code>blockTimestamp</code> must match the current block, ensuring the data is never stale.</p>
+
+<p><code>batchUpdateStateWithSignature(SignedUpdate[] updates)</code></p>
+
+<p>For batching multiple updates, accepts an array of EIP-712 signed updates that anyone can submit on behalf of updaters.</p>
+
+<p><strong>Reading state.</strong></p>
+
+<p><code>getState(uint256 numSlots) returns (uint256[] memory)</code></p>
+
+<p>A target contract calls this on the registry (<code>msg.sender</code> determines which target's state is returned). Reverts with <code>StateNotUpdated</code> if no update has been written in the current block, so consumers never read stale data.</p>
+
 <h2>How Updaters Submit Updates to the Builder</h2>
 
 <p>Updaters sign priority updates and send them to the builder. The builder keeps a pool of pending updates, one per target contract (latest wins).</p>
