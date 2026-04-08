@@ -11,7 +11,7 @@ contract GasBenchmarkTest is Test {
     address target = address(0x2);
 
     uint256 constant MAX_K = 10;
-    uint256 constant MAX_N = 10;
+    uint256 constant MAX_N = 11;
 
     function _target(uint256 i) internal pure returns (address) {
         return address(uint160(0x1000 + i));
@@ -59,21 +59,21 @@ contract GasBenchmarkTest is Test {
 
     function estimateUpdateGas(uint256 k) internal pure returns (uint256) {
         /// 21000 + A0 + k * A1
-        return 21000 + 9324 + k * 5212;
+        return 21000 + 9351 + k * 5212;
     }
 
     function estimateBatchSigGas(uint256 n, uint256 k) internal pure returns (uint256) {
         /// 21000 + B0 + n*(B1 + k * B2)
-        return 21000 + 872 + n * (15757 + k * 5238);
+        return 21000 + 872 + n * (15806 + k * 5238);
     }
 
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {
         if (warm) {
             /// C0 + C1*k
-            return 1196 + 269 * k;
+            return 1236 + 269 * k;
         } else {
             /// D0 + D1*k
-            return 3196 + 2269 * k;
+            return 3236 + 2269 * k;
         }
     }
 
@@ -216,13 +216,21 @@ contract GasBenchmarkTest is Test {
         console.log("B2 = %d", B2);
     }
 
+    function _writeWithKSlots(address t, uint256 k) internal {
+        uint256[] memory slots = _makeUpdateSlots(uint32(k), k);
+        vm.prank(updater);
+        registry.updateState(t, 0, block.timestamp, slots);
+    }
+
     function test_calculate_C0() public {
+        _writeWithKSlots(target, 0);
+
         vm.prank(target);
-        registry.getState(0, 1 + MAX_K);
+        registry.getState(0);
 
         vm.prank(target);
         vm.startSnapshotGas("read_warm_k=0");
-        registry.getState(0, 1);
+        registry.getState(0);
         uint256 used = vm.snapshotGasLastCall("read_warm_k=0");
 
         console.log("C0 = %d", used);
@@ -232,18 +240,26 @@ contract GasBenchmarkTest is Test {
         uint256 k0 = 5;
         uint256 k1 = 10;
 
-        vm.prank(target);
-        registry.getState(0, 1 + MAX_K);
+        address t0 = _target(0);
+        address t1 = _target(1);
 
-        vm.prank(target);
+        _writeWithKSlots(t0, k0);
+        _writeWithKSlots(t1, k1);
+
+        vm.prank(t0);
+        registry.getState(0);
+        vm.prank(t1);
+        registry.getState(0);
+
+        vm.prank(t0);
         vm.startSnapshotGas("read_warm_k=5");
-        registry.getState(0, 1 + k0);
+        registry.getState(0);
         uint256 gas0 = vm.snapshotGasLastCall("read_warm_k=5");
         vm.stopSnapshotGas("read_warm_k=5");
 
-        vm.prank(target);
+        vm.prank(t1);
         vm.startSnapshotGas("read_warm_k=10");
-        registry.getState(0, 1 + k1);
+        registry.getState(0);
         uint256 gas1 = vm.snapshotGasLastCall("read_warm_k=10");
         vm.stopSnapshotGas("read_warm_k=10");
 
@@ -252,11 +268,13 @@ contract GasBenchmarkTest is Test {
     }
 
     function test_calculate_D0() public {
+        _writeWithKSlots(target, 0);
+
         vm.cool(address(registry));
 
         vm.prank(target);
         vm.startSnapshotGas("read_cold_k=0");
-        registry.getState(0, 1);
+        registry.getState(0);
         uint256 used = vm.snapshotGasLastCall("read_cold_k=0");
 
         console.log("D0 = %d", used);
@@ -266,21 +284,27 @@ contract GasBenchmarkTest is Test {
         uint256 k0 = 5;
         uint256 k1 = 10;
 
+        address t0 = _target(0);
+        address t1 = _target(1);
+
+        _writeWithKSlots(t0, k0);
+        _writeWithKSlots(t1, k1);
+
         uint256 snap = vm.snapshot();
         vm.cool(address(registry));
 
-        vm.prank(target);
+        vm.prank(t0);
         vm.startSnapshotGas("read_cold_k=5");
-        registry.getState(0, 1 + k0);
+        registry.getState(0);
         uint256 gas0 = vm.snapshotGasLastCall("read_cold_k=5");
         vm.stopSnapshotGas("read_cold_k=5");
         vm.revertTo(snap);
 
         vm.cool(address(registry));
 
-        vm.prank(target);
+        vm.prank(t1);
         vm.startSnapshotGas("read_cold_k=10");
-        registry.getState(0, 1 + k1);
+        registry.getState(0);
         uint256 gas1 = vm.snapshotGasLastCall("read_cold_k=10");
         vm.stopSnapshotGas("read_cold_k=10");
 
@@ -333,13 +357,18 @@ contract GasBenchmarkTest is Test {
     }
 
     function test_verify_read_formulas() public {
-        vm.prank(target);
-        registry.getState(0, 1 + MAX_K);
+        for (uint256 k = 0; k <= MAX_K; k++) {
+            address t = _target(k);
+            _writeWithKSlots(t, k);
+            vm.prank(t);
+            registry.getState(0);
+        }
 
         for (uint256 k = 0; k <= MAX_K; k++) {
-            vm.prank(target);
+            address t = _target(k);
+            vm.prank(t);
             vm.startSnapshotGas("verify");
-            registry.getState(0, 1 + k);
+            registry.getState(0);
             uint256 actual = vm.snapshotGasLastCall("verify");
             vm.stopSnapshotGas("verify");
 
@@ -347,12 +376,13 @@ contract GasBenchmarkTest is Test {
         }
 
         for (uint256 k = 0; k <= MAX_K; k++) {
+            address t = _target(k);
             uint256 snap = vm.snapshot();
             vm.cool(address(registry));
 
-            vm.prank(target);
+            vm.prank(t);
             vm.startSnapshotGas("verify");
-            registry.getState(0, 1 + k);
+            registry.getState(0);
             uint256 actual = vm.snapshotGasLastCall("verify");
             vm.stopSnapshotGas("verify");
 

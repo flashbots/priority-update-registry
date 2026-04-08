@@ -10,7 +10,8 @@ contract PrioUpdateRegistry is EIP712 {
     error WrongTimestamp();
     error WrongChainId();
     error EmptySlots();
-    error Slot0Exceeds28Bytes();
+    error Slot0Exceeds27Bytes();
+    error TooManySlots();
     error StateNotUpdated();
 
     /*
@@ -47,11 +48,10 @@ contract PrioUpdateRegistry is EIP712 {
 
     /*
      * Returns the current block's state for `msg.sender` at the given `laneIndex`.
-     * `numSlots` must be at least 1. Slot 0 freshness is checked via the packed timestamp.
-     * Additional requested slots are returned as-is from storage, so callers must use the target's
-     * configured fixed width. Shorter writes do not clear previously written tail slots.
+     * Slot 0 freshness is checked via the packed timestamp.
+     * The number of slots returned matches the number that were written.
      */
-    function getState(uint256 laneIndex, uint256 numSlots) external view returns (uint256[] memory) {
+    function getState(uint256 laneIndex) external view returns (uint256[] memory) {
         uint256 base = _laneSlot0Index(msg.sender, laneIndex);
         uint256 first;
         assembly {
@@ -59,8 +59,9 @@ contract PrioUpdateRegistry is EIP712 {
         }
         if (uint32(first >> 224) != uint32(block.timestamp)) revert StateNotUpdated();
 
+        uint256 numSlots = uint8(first >> 216);
         uint256[] memory result = new uint256[](numSlots);
-        result[0] = uint224(first);
+        result[0] = uint216(first);
         for (uint256 i = 1; i < numSlots; i++) {
             assembly {
                 mstore(add(add(result, 32), mul(i, 32)), sload(add(base, i)))
@@ -98,7 +99,8 @@ contract PrioUpdateRegistry is EIP712 {
         if (blockTimestamp != block.timestamp) revert WrongTimestamp();
         if (chainId != block.chainid) revert WrongChainId();
         if (slots.length == 0) revert EmptySlots();
-        if (slots[0] >> 224 != 0) revert Slot0Exceeds28Bytes();
+        if (slots.length > 255) revert TooManySlots();
+        if (slots[0] >> 216 != 0) revert Slot0Exceeds27Bytes();
 
         uint256 s = _updaterSlot(target);
         uint256 storedUpdater;
@@ -108,7 +110,7 @@ contract PrioUpdateRegistry is EIP712 {
         if (updater != address(uint160(storedUpdater))) revert NotAuthorized();
 
         uint256 base = _laneSlot0Index(target, laneIndex);
-        uint256 first = (uint256(uint32(blockTimestamp)) << 224) | slots[0];
+        uint256 first = (uint256(uint32(blockTimestamp)) << 224) | (slots.length << 216) | slots[0];
         assembly {
             sstore(base, first)
         }

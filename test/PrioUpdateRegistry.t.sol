@@ -81,7 +81,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0, 1);
+        uint256[] memory got = registry.getState(0);
         assertEq(got[0], slots[0]);
     }
 
@@ -96,7 +96,8 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0, 3);
+        uint256[] memory got = registry.getState(0);
+        assertEq(got.length, 3);
         assertEq(got[0], slots[0]);
         assertEq(got[1], slots[1]);
         assertEq(got[2], slots[2]);
@@ -132,10 +133,10 @@ contract PrioUpdateRegistryTest is Test {
     function test_updateState_reverts_slot0_too_large() public {
         registry.setUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
-        slots[0] = uint256(1) << 224;
+        slots[0] = uint256(1) << 216;
 
         vm.prank(updater);
-        vm.expectRevert(PrioUpdateRegistry.Slot0Exceeds28Bytes.selector);
+        vm.expectRevert(PrioUpdateRegistry.Slot0Exceeds27Bytes.selector);
         registry.updateState(target, 0, block.timestamp, slots);
     }
 
@@ -149,13 +150,13 @@ contract PrioUpdateRegistryTest is Test {
         vm.warp(block.timestamp + 12);
         vm.prank(target);
         vm.expectRevert(PrioUpdateRegistry.StateNotUpdated.selector);
-        registry.getState(0, 1);
+        registry.getState(0);
     }
 
     function test_getState_reverts_never_updated() public {
         vm.prank(target);
         vm.expectRevert(PrioUpdateRegistry.StateNotUpdated.selector);
-        registry.getState(0, 1);
+        registry.getState(0);
     }
 
     function test_overwrite_state_same_block() public {
@@ -172,7 +173,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots2);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0, 1);
+        uint256[] memory got = registry.getState(0);
         assertEq(got[0], 0xbb);
     }
 
@@ -201,11 +202,11 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 1, block.timestamp, slots1);
 
         vm.prank(target);
-        uint256[] memory got0 = registry.getState(0, 1);
+        uint256[] memory got0 = registry.getState(0);
         assertEq(got0[0], 0xaa);
 
         vm.prank(target);
-        uint256[] memory got1 = registry.getState(1, 1);
+        uint256[] memory got1 = registry.getState(1);
         assertEq(got1[0], 0xbb);
 
         vm.warp(block.timestamp + 12);
@@ -214,11 +215,11 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots0);
 
         vm.prank(target);
-        registry.getState(0, 1);
+        registry.getState(0);
 
         vm.prank(target);
         vm.expectRevert(PrioUpdateRegistry.StateNotUpdated.selector);
-        registry.getState(1, 1);
+        registry.getState(1);
     }
 
     function test_batchUpdateStateWithSignature_and_getState_single_slot() public {
@@ -232,7 +233,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.batchUpdateStateWithSignature(updates);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0, 1);
+        uint256[] memory got = registry.getState(0);
         assertEq(got[0], slots[0]);
     }
 
@@ -326,12 +327,12 @@ contract PrioUpdateRegistryTest is Test {
     function test_batchUpdateStateWithSignature_reverts_slot0_too_large() public {
         registry.setUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
-        slots[0] = uint256(1) << 224;
+        slots[0] = uint256(1) << 216;
 
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
         updates[0] = _makeSignedUpdate(target, 0, block.timestamp, block.chainid, slots);
 
-        vm.expectRevert(PrioUpdateRegistry.Slot0Exceeds28Bytes.selector);
+        vm.expectRevert(PrioUpdateRegistry.Slot0Exceeds27Bytes.selector);
         registry.batchUpdateStateWithSignature(updates);
     }
 }
