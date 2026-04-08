@@ -26,24 +26,25 @@ The main downside of this is the complexity of execution when inserting priority
 ### Priority Updates
 
 - Each target contract has exactly one authorized updater address that can publish priority updates. Authorized updater must be an EOA.
-- A priority update consists of an 8-byte (64-bit) base value plus k additional 32-byte slots. Each additional slot increases the gas cost of an update.
+- A priority update consists of a 28-byte (224-bit) base value plus k additional 32-byte slots. Each additional slot increases the gas cost of an update.
+- Each target can have multiple independent **lanes** (identified by `laneIndex`). Updates to different lanes are independent — they land separately and have separate freshness.
 - A priority update is only valid for the block that it targets.
 - Priority updates can only be read by the target contract itself (via `msg.sender`).
-- Each target is expected to use a fixed read width (value of k).
+- Each target is expected to use a fixed read width (value of k) per lane.
 
 ### Writing Priority Updates
 
-All write methods require `blockTimestamp == block.timestamp`, `chainId == block.chainid`, and at least one slot. `slots[0]` must fit in 8 bytes (64 bits), as it is packed into the base storage word alongside the updater address and timestamp. `slots[1..]` are full `uint256` values. Writes overwrite only the supplied slots.
+All write methods require `blockTimestamp == block.timestamp`, `chainId == block.chainid`, and at least one slot. `slots[0]` must fit in 28 bytes (224 bits), as it is packed into the base storage word alongside the timestamp. `slots[1..]` are full `uint256` values. Writes overwrite only the supplied slots.
 
-- **`updateState(address target, uint256 blockTimestamp, uint256[] slots)`**
+- **`updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] slots)`**
   Direct call from the authorized updater (`msg.sender` must match the stored updater for `target`).
 
 - **`batchUpdateStateWithSignature(SignedUpdate[] updates)`**
-  Batch multiple signed updates in a single transaction. Anyone can relay; the updater is recovered from an EIP-712 signature. Each element contains `(target, blockTimestamp, chainId, slots, signature)`.
+  Batch multiple signed updates in a single transaction. The updater is recovered from an EIP-712 signature. Each element contains `(target, laneIndex, blockTimestamp, chainId, slots, signature)`.
 
 ### Reading Priority Updates
 
-- **`getState(uint256 numSlots) → uint256[]`** — called by `target` itself (`msg.sender` is the target). Reverts if no priority update was written in the current block. `numSlots` must be at least 1. Returns `numSlots` values starting from the first slot. Callers should use the target's fixed configured width, because shorter writes leave old tail slots unchanged.
+- **`getState(uint256 laneIndex, uint256 numSlots) → uint256[]`** — called by `target` itself (`msg.sender` is the target). Reverts if no priority update was written in the current block for the given lane. `numSlots` must be at least 1. Returns `numSlots` values starting from the first slot. Callers should use the target's fixed configured width, because shorter writes leave old tail slots unchanged.
 - `getUpdater(address target) → address` — returns the authorized updater for `target`.
 
 ### Admin
@@ -56,28 +57,36 @@ All write methods require `blockTimestamp == block.timestamp`, `chainId == block
 ### EIP-712
 
 - `DOMAIN_SEPARATOR() → bytes32`
-- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 blockTimestamp,uint256 chainId,uint256[] slots)")`
+- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256 chainId,uint256[] slots)")`
 
 Domain name: `"PrioUpdateRegistry"`, version: `"1"`.
 
 ## Storage Layout
 
-Each target's priority update is stored at a contiguous range of slots computed by `_slot(target, index)`:
+**Updater storage.** Each target's authorized updater is stored at:
 
 ```
-slot[index] = 0xcc << 248 | uint160(target) << 88 | index
+slot = 0x02 << 248 | uint160(target)
+value = uint160(updater)
 ```
 
-**Slot 0** (base slot) packs three fields into a single word:
+**Lane state storage.** Each (target, laneIndex) pair has a contiguous range of slots:
 
 ```
-[ blockTimestamp (32 bits) | updater address (160 bits) | slot0 value (64 bits) ]
-  bits 255..224              bits 223..64                  bits 63..0
+base = keccak256(abi.encode(target, laneIndex))
+slot[i] = base + i
+```
+
+**Slot 0** (base slot) packs two fields into a single word:
+
+```
+[ blockTimestamp (32 bits) | slot0 value (224 bits) ]
+  bits 255..224              bits 223..0
 ```
 
 **Slots 1..k** store raw `uint256` values.
 
-`getState` checks that `blockTimestamp` in slot 0 matches `block.timestamp`; if not, the priority update is stale and the call reverts. The timestamp freshness check applies only to slot 0; higher slots are trusted as the current state for whatever fixed width the target uses.
+`getState` checks that `blockTimestamp` in slot 0 matches `block.timestamp`; if not, the priority update is stale and the call reverts. The timestamp freshness check applies only to slot 0; higher slots are trusted as the current state for whatever fixed width the target uses. Different lanes are fully independent — updating one lane does not affect others.
 
 ## Gas Costs
 
@@ -85,10 +94,10 @@ Gas costs are measured via `test/GasBenchmark.t.sol`.
 
 | Method | Formula |
 |---|---|
-| Direct `updateState` | `21000 + 6876 + k × 5212` |
-| Batched `batchUpdateStateWithSignature` | `21000 + 830 + n × (13331 + k × 5236)` |
-| `getState` (warm) | `1090 + k × 269` |
-| `getState` (cold) | `3090 + k × 2269` |
+| Direct `updateState` | `21000 + 9324 + k × 5212` |
+| Batched `batchUpdateStateWithSignature` | `21000 + 872 + n × (15757 + k × 5238)` |
+| `getState` (warm) | `1196 + k × 269` |
+| `getState` (cold) | `3196 + k × 2269` |
 
 Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch.
 
@@ -98,10 +107,10 @@ These formulas measure steady-state overwrites on already-initialized storage, w
 
 | n (updates) | n × direct txs | 1 batched tx | Savings |
 |---|---|---|---|
-| 1 | 27,876 | 35,161 | -26% |
-| 2 | 55,752 | 48,492 | 14% |
-| 5 | 139,380 | 88,485 | 37% |
-| 10 | 278,760 | 155,140 | 45% |
+| 1 | 30,324 | 37,629 | -24% |
+| 2 | 60,648 | 53,386 | 12% |
+| 5 | 151,620 | 100,657 | 34% |
+| 10 | 303,240 | 179,442 | 41% |
 
 Batching breaks even at ~2 updates and saves increasingly more as n grows.
 

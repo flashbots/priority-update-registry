@@ -10,7 +10,7 @@ contract PrioUpdateRegistry is EIP712 {
     error WrongTimestamp();
     error WrongChainId();
     error EmptySlots();
-    error Slot0Exceeds8Bytes();
+    error Slot0Exceeds28Bytes();
     error StateNotUpdated();
 
     /*
@@ -34,8 +34,8 @@ contract PrioUpdateRegistry is EIP712 {
      */
     function setUpdater(address target, address updater) external {
         if (msg.sender != admin) revert NotAdmin();
-        uint256 s = _slot(target, 0);
-        uint256 val = uint256(uint160(updater)) << 64;
+        uint256 s = _updaterSlot(target);
+        uint256 val = uint256(uint160(updater));
         assembly {
             sstore(s, val)
         }
@@ -46,13 +46,13 @@ contract PrioUpdateRegistry is EIP712 {
      */
 
     /*
-     * Returns the current block's state for `msg.sender`.
+     * Returns the current block's state for `msg.sender` at the given `laneIndex`.
      * `numSlots` must be at least 1. Slot 0 freshness is checked via the packed timestamp.
      * Additional requested slots are returned as-is from storage, so callers must use the target's
      * configured fixed width. Shorter writes do not clear previously written tail slots.
      */
-    function getState(uint256 numSlots) external view returns (uint256[] memory) {
-        uint256 base = _slot(msg.sender, 0);
+    function getState(uint256 laneIndex, uint256 numSlots) external view returns (uint256[] memory) {
+        uint256 base = _laneSlot0Index(msg.sender, laneIndex);
         uint256 first;
         assembly {
             first := sload(base)
@@ -60,7 +60,7 @@ contract PrioUpdateRegistry is EIP712 {
         if (uint32(first >> 224) != uint32(block.timestamp)) revert StateNotUpdated();
 
         uint256[] memory result = new uint256[](numSlots);
-        result[0] = uint64(first);
+        result[0] = uint224(first);
         for (uint256 i = 1; i < numSlots; i++) {
             assembly {
                 mstore(add(add(result, 32), mul(i, 32)), sload(add(base, i)))
@@ -71,21 +71,26 @@ contract PrioUpdateRegistry is EIP712 {
 
     /* Returns the authorized updater for `target`. */
     function getUpdater(address target) external view returns (address) {
-        uint256 s = _slot(target, 0);
+        uint256 s = _updaterSlot(target);
         uint256 v;
         assembly {
             v := sload(s)
         }
-        return address(uint160(v >> 64));
+        return address(uint160(v));
     }
 
-    function _slot(address target, uint256 index) internal pure returns (uint256) {
-        return (uint256(0xcc) << 248) | (uint256(uint160(target)) << 88) | index;
+    function _updaterSlot(address target) internal pure returns (uint256) {
+        return (uint256(0x02) << 248) | uint256(uint160(target));
+    }
+
+    function _laneSlot0Index(address target, uint256 laneIndex) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(target, laneIndex)));
     }
 
     function _writeState(
         address target,
         address updater,
+        uint256 laneIndex,
         uint256 blockTimestamp,
         uint256 chainId,
         uint256[] calldata slots
@@ -93,16 +98,17 @@ contract PrioUpdateRegistry is EIP712 {
         if (blockTimestamp != block.timestamp) revert WrongTimestamp();
         if (chainId != block.chainid) revert WrongChainId();
         if (slots.length == 0) revert EmptySlots();
-        if (slots[0] >> 64 != 0) revert Slot0Exceeds8Bytes();
+        if (slots[0] >> 224 != 0) revert Slot0Exceeds28Bytes();
 
-        uint256 base = _slot(target, 0);
-        uint256 first;
+        uint256 s = _updaterSlot(target);
+        uint256 storedUpdater;
         assembly {
-            first := sload(base)
+            storedUpdater := sload(s)
         }
-        if (updater != address(uint160(first >> 64))) revert NotAuthorized();
+        if (updater != address(uint160(storedUpdater))) revert NotAuthorized();
 
-        first = (uint256(uint32(blockTimestamp)) << 224) | (uint256(uint160(updater)) << 64) | slots[0];
+        uint256 base = _laneSlot0Index(target, laneIndex);
+        uint256 first = (uint256(uint32(blockTimestamp)) << 224) | slots[0];
         assembly {
             sstore(base, first)
         }
@@ -114,18 +120,19 @@ contract PrioUpdateRegistry is EIP712 {
     }
 
     /*
-     * Writes a state update for `target` using `msg.sender` as the updater.
+     * Writes a state update for `target` at `laneIndex` using `msg.sender` as the updater.
      */
-    function updateState(address target, uint256 blockTimestamp, uint256[] calldata slots) external {
-        _writeState(target, msg.sender, blockTimestamp, block.chainid, slots);
+    function updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] calldata slots) external {
+        _writeState(target, msg.sender, laneIndex, blockTimestamp, block.chainid, slots);
     }
 
     /*
      * Signed Update
      */
 
-    bytes32 public constant UPDATE_TYPEHASH =
-        keccak256("UpdateState(address target,uint256 blockTimestamp,uint256 chainId,uint256[] slots)");
+    bytes32 public constant UPDATE_TYPEHASH = keccak256(
+        "UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256 chainId,uint256[] slots)"
+    );
 
     function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
         name = "PrioUpdateRegistry";
@@ -139,6 +146,7 @@ contract PrioUpdateRegistry is EIP712 {
 
     struct SignedUpdate {
         address target;
+        uint256 laneIndex;
         uint256 blockTimestamp;
         uint256 chainId;
         uint256[] slots;
@@ -154,10 +162,17 @@ contract PrioUpdateRegistry is EIP712 {
         for (uint256 i = 0; i < updates.length; i++) {
             SignedUpdate calldata u = updates[i];
             bytes32 structHash = keccak256(
-                abi.encode(UPDATE_TYPEHASH, u.target, u.blockTimestamp, u.chainId, keccak256(abi.encodePacked(u.slots)))
+                abi.encode(
+                    UPDATE_TYPEHASH,
+                    u.target,
+                    u.laneIndex,
+                    u.blockTimestamp,
+                    u.chainId,
+                    keccak256(abi.encodePacked(u.slots))
+                )
             );
             address signer = ECDSA.recover(_hashTypedData(structHash), u.signature);
-            _writeState(u.target, signer, u.blockTimestamp, u.chainId, u.slots);
+            _writeState(u.target, signer, u.laneIndex, u.blockTimestamp, u.chainId, u.slots);
         }
     }
 }

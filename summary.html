@@ -57,13 +57,13 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 
 <h2>Interface</h2>
 
-<p>Each target's state is a list of slots: the first slot holds 8 bytes, followed by <em>k</em> additional 32-byte slots.</p>
+<p>Each target's state is a list of slots: the first slot holds 28 bytes, followed by <em>k</em> additional 32-byte slots. Each target can have multiple independent <strong>lanes</strong> (identified by <code>laneIndex</code>). Updates to different lanes are independent.</p>
 
 <p>The registry exposes two core operations:</p>
 
 <p><strong>Updating state.</strong></p>
 
-<p><code>updateState(address target, uint256 blockTimestamp, uint256[] slots)</code></p>
+<p><code>updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] slots)</code></p>
 
 <p>An authorized updater calls this to write fresh state for a target contract. The <code>blockTimestamp</code> must match the current block, ensuring the data is never stale.</p>
 
@@ -73,9 +73,9 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 
 <p><strong>Reading state.</strong></p>
 
-<p><code>getState(uint256 numSlots) returns (uint256[] memory)</code></p>
+<p><code>getState(uint256 laneIndex, uint256 numSlots) returns (uint256[] memory)</code></p>
 
-<p>A target contract calls this on the registry (<code>msg.sender</code> determines which target's state is returned). Reverts with <code>StateNotUpdated</code> if no update has been written in the current block, so consumers never read stale data.</p>
+<p>A target contract calls this on the registry (<code>msg.sender</code> and <code>laneIndex</code> determine which state is returned). Reverts with <code>StateNotUpdated</code> if no update has been written in the current block for that lane, so consumers never read stale data.</p>
 
 <h2>How Updaters Submit Updates to the Builder</h2>
 
@@ -167,24 +167,24 @@ sequenceDiagram
 
 <h2>Costs</h2>
 
-<p>Each contract gets 8 bytes plus k additional 32-byte slots of state. Gas costs scale linearly with k.</p>
+<p>Each lane gets 28 bytes plus k additional 32-byte slots of state. Gas costs scale linearly with k.</p>
 
 <table>
   <tr><th>Operation</th><th>Gas</th></tr>
-  <tr><td>Direct update</td><td>21000 + 6876 + k × 5212</td></tr>
-  <tr><td>Batched update (n updates)</td><td>21000 + 830 + n × (13331 + k × 5236)</td></tr>
-  <tr><td>Read (cold)</td><td>3090 + k × 2269</td></tr>
-  <tr><td>Read (warm)</td><td>1090 + k × 269</td></tr>
+  <tr><td>Direct update</td><td>21000 + 9324 + k × 5212</td></tr>
+  <tr><td>Batched update (n updates)</td><td>21000 + 872 + n × (15757 + k × 5238)</td></tr>
+  <tr><td>Read (cold)</td><td>3196 + k × 2269</td></tr>
+  <tr><td>Read (warm)</td><td>1196 + k × 269</td></tr>
 </table>
 
 <p>Batching vs individual transactions (k = 0):</p>
 
 <table>
   <tr><th>Updates</th><th>Individual (per update)</th><th>Batched (per update)</th><th>Savings</th></tr>
-  <tr><td>1</td><td>27,876</td><td>35,161</td><td>-26%</td></tr>
-  <tr><td>2</td><td>27,876</td><td>24,246</td><td>14%</td></tr>
-  <tr><td>5</td><td>27,876</td><td>17,697</td><td>37%</td></tr>
-  <tr><td>10</td><td>27,876</td><td>15,514</td><td>45%</td></tr>
+  <tr><td>1</td><td>30,324</td><td>37,629</td><td>-24%</td></tr>
+  <tr><td>2</td><td>30,324</td><td>26,693</td><td>12%</td></tr>
+  <tr><td>5</td><td>30,324</td><td>20,131</td><td>34%</td></tr>
+  <tr><td>10</td><td>30,324</td><td>17,944</td><td>41%</td></tr>
 </table>
 
 <p>Batching breaks even at ~2 updates and saves more as the number grows.</p>
