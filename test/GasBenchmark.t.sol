@@ -17,7 +17,7 @@ contract GasBenchmarkTest is Test {
         return address(uint160(0x1000 + i));
     }
 
-    function _signUpdate(address t, uint256 laneIndex, uint256 ts, uint256[] memory slots)
+    function _signUpdate(address t, uint256 laneIndex, uint32 ts, uint256[] memory slots)
         internal
         view
         returns (bytes memory)
@@ -48,34 +48,34 @@ contract GasBenchmarkTest is Test {
         vm.prank(target);
         registry.addUpdater(updater);
         vm.prank(updater);
-        registry.updateState(target, 0, block.timestamp, slots);
+        registry.updateState(target, 0, uint32(block.timestamp), slots);
 
         for (uint256 n = 0; n < MAX_N; n++) {
             address t = _target(n);
             vm.prank(t);
             registry.addUpdater(updater);
             vm.prank(updater);
-            registry.updateState(t, 0, block.timestamp, slots);
+            registry.updateState(t, 0, uint32(block.timestamp), slots);
         }
     }
 
     function estimateUpdateGas(uint256 k) internal pure returns (uint256) {
         /// 21000 + A0 + k * A1
-        return 21000 + 9393 + k * 5212;
+        return 21000 + 9434 + k * 5212;
     }
 
     function estimateBatchSigGas(uint256 n, uint256 k) internal pure returns (uint256) {
         /// 21000 + B0 + n*(B1 + k * B2)
-        return 21000 + 872 + n * (16829 + k * 5237);
+        return 21000 + 894 + n * (17110 + k * 5235);
     }
 
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {
         if (warm) {
             /// C0 + C1*k
-            return 1191 + 269 * k;
+            return 1287 + 269 * k;
         } else {
             /// D0 + D1*k
-            return 3191 + 2269 * k;
+            return 3287 + 2269 * k;
         }
     }
 
@@ -91,7 +91,7 @@ contract GasBenchmarkTest is Test {
 
         vm.prank(updater);
         vm.startSnapshotGas("update_direct_k=0");
-        r.updateState(t, 0, block.timestamp, slots);
+        r.updateState(t, 0, uint32(block.timestamp), slots);
         uint256 used = vm.snapshotGasLastCall("update_direct_k=0");
 
         uint256 A0 = used - 21000;
@@ -115,7 +115,7 @@ contract GasBenchmarkTest is Test {
         vm.cool(address(r));
         vm.prank(updater);
         vm.startSnapshotGas("update_direct_k=5");
-        r.updateState(t, 0, block.timestamp, slots0);
+        r.updateState(t, 0, uint32(block.timestamp), slots0);
         uint256 gas_before = vm.snapshotGasLastCall("update_direct_k=5");
         vm.stopSnapshotGas("update_direct_k=5");
         vm.revertTo(snap);
@@ -123,7 +123,7 @@ contract GasBenchmarkTest is Test {
         vm.cool(address(r));
         vm.prank(updater);
         vm.startSnapshotGas("update_direct_k=10");
-        r.updateState(t, 0, block.timestamp, slots1);
+        r.updateState(t, 0, uint32(block.timestamp), slots1);
         uint256 gas_after = vm.snapshotGasLastCall("update_direct_k=10");
         vm.stopSnapshotGas("update_direct_k=10");
 
@@ -136,8 +136,8 @@ contract GasBenchmarkTest is Test {
         for (uint256 i = 0; i < n; i++) {
             address t = _target(i);
             uint256[] memory slots = _makeUpdateSlots(0xcc + uint32(i), k);
-            bytes memory sig = _signUpdate(t, 0, block.timestamp, slots);
-            updates[i] = PrioUpdateRegistry.SignedUpdate(t, updater, 0, block.timestamp, slots, sig);
+            bytes memory sig = _signUpdate(t, 0, uint32(block.timestamp), slots);
+            updates[i] = PrioUpdateRegistry.SignedUpdate(t, updater, 0, uint32(block.timestamp), slots, sig);
         }
     }
 
@@ -221,7 +221,7 @@ contract GasBenchmarkTest is Test {
     function _writeWithKSlots(address t, uint256 k) internal {
         uint256[] memory slots = _makeUpdateSlots(uint32(k), k);
         vm.prank(updater);
-        registry.updateState(t, 0, block.timestamp, slots);
+        registry.updateState(t, 0, uint32(block.timestamp), slots);
     }
 
     function test_calculate_C0() public {
@@ -326,7 +326,7 @@ contract GasBenchmarkTest is Test {
             vm.cool(address(r));
             vm.prank(updater);
             vm.startSnapshotGas("verify");
-            r.updateState(t, 0, block.timestamp, slots);
+            r.updateState(t, 0, uint32(block.timestamp), slots);
             uint256 actual = vm.snapshotGasLastCall("verify");
             vm.stopSnapshotGas("verify");
 

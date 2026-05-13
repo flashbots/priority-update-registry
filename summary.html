@@ -63,9 +63,9 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 
 <p><strong>Updating state.</strong></p>
 
-<p><code>updateState(address target, uint256 laneIndex, uint256 updateTimestamp, uint256[] slots)</code></p>
+<p><code>updateState(address target, uint256 laneIndex, uint32 updateTimestamp, uint256[] slots)</code></p>
 
-<p>An authorized updater calls this to write fresh state for a target contract. The <code>updateTimestamp</code> is chosen by the writer and stored verbatim (truncated to 32 bits); the registry does not validate it. Consumers compare it against <code>block.timestamp</code> to decide whether the data is fresh.</p>
+<p>An authorized updater calls this to write fresh state for a target contract. The <code>updateTimestamp</code> is chosen by the writer and stored verbatim; the registry does not validate it. Consumers compare it against <code>block.timestamp</code> to decide whether the data is fresh.</p>
 
 <p><code>batchUpdateStateWithSignature(SignedUpdate[] updates)</code></p>
 
@@ -171,20 +171,20 @@ sequenceDiagram
 
 <table>
   <tr><th>Operation</th><th>Gas</th></tr>
-  <tr><td>Direct update</td><td>21000 + 9393 + k × 5212</td></tr>
-  <tr><td>Batched update (n updates)</td><td>21000 + 872 + n × (16829 + k × 5237)</td></tr>
-  <tr><td>Read (cold)</td><td>3191 + k × 2269</td></tr>
-  <tr><td>Read (warm)</td><td>1191 + k × 269</td></tr>
+  <tr><td>Direct update</td><td>21000 + 9434 + k × 5212</td></tr>
+  <tr><td>Batched update (n updates)</td><td>21000 + 894 + n × (17110 + k × 5235)</td></tr>
+  <tr><td>Read (cold)</td><td>3287 + k × 2269</td></tr>
+  <tr><td>Read (warm)</td><td>1287 + k × 269</td></tr>
 </table>
 
 <p>Batching vs individual transactions (k = 0):</p>
 
 <table>
   <tr><th>Updates</th><th>Individual (per update)</th><th>Batched (per update)</th><th>Savings</th></tr>
-  <tr><td>1</td><td>30,393</td><td>38,701</td><td>-27%</td></tr>
-  <tr><td>2</td><td>30,393</td><td>27,765</td><td>9%</td></tr>
-  <tr><td>5</td><td>30,393</td><td>21,203</td><td>31%</td></tr>
-  <tr><td>10</td><td>30,393</td><td>19,016</td><td>38%</td></tr>
+  <tr><td>1</td><td>30,434</td><td>39,004</td><td>-28%</td></tr>
+  <tr><td>2</td><td>30,434</td><td>28,057</td><td>8%</td></tr>
+  <tr><td>5</td><td>30,434</td><td>21,489</td><td>30%</td></tr>
+  <tr><td>10</td><td>30,434</td><td>19,299</td><td>37%</td></tr>
 </table>
 
 <p>Batching breaks even at ~2 updates and saves more as the number grows.</p>

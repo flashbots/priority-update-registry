@@ -70,7 +70,7 @@ contract PrioUpdateRegistry is EIP712 {
     function _writeState(
         address target,
         uint256 laneIndex,
-        uint256 updateTimestamp,
+        uint32 updateTimestamp,
         uint256[] calldata slots
     ) internal {
         if (slots.length == 0) revert EmptySlots();
@@ -78,7 +78,7 @@ contract PrioUpdateRegistry is EIP712 {
         if (slots[0] >> 216 != 0) revert Slot0Exceeds27Bytes();
 
         uint256 base = _laneSlot0Index(target, laneIndex);
-        uint256 first = (uint256(uint32(updateTimestamp)) << 224) | (slots.length << 216) | slots[0];
+        uint256 first = (uint256(updateTimestamp) << 224) | (slots.length << 216) | slots[0];
         assembly {
             sstore(base, first)
         }
@@ -92,7 +92,7 @@ contract PrioUpdateRegistry is EIP712 {
     /*
      * Writes a state update for `target` at `laneIndex` using `msg.sender` as the updater.
      */
-    function updateState(address target, uint256 laneIndex, uint256 updateTimestamp, uint256[] calldata slots) external {
+    function updateState(address target, uint256 laneIndex, uint32 updateTimestamp, uint256[] calldata slots) external {
         if (!isUpdater[target][msg.sender]) revert NotAuthorized();
         _writeState(target, laneIndex, updateTimestamp, slots);
     }
@@ -102,7 +102,7 @@ contract PrioUpdateRegistry is EIP712 {
      */
 
     bytes32 public constant UPDATE_TYPEHASH = keccak256(
-        "UpdateState(address target,uint256 laneIndex,uint256 updateTimestamp,uint256[] slots)"
+        "UpdateState(address target,uint256 laneIndex,uint32 updateTimestamp,uint256[] slots)"
     );
 
     function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
@@ -119,7 +119,7 @@ contract PrioUpdateRegistry is EIP712 {
         address target;
         address signer;
         uint256 laneIndex;
-        uint256 updateTimestamp;
+        uint32 updateTimestamp;
         uint256[] slots;
         bytes signature;
     }

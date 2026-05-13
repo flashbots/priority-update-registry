@@ -1,3 +1,17 @@
 {
-  "verify": "1089948"
+  "read_cold_k=0": "3287",
+  "read_cold_k=10": "30415",
+  "read_cold_k=5": "16573",
+  "read_warm_k=0": "1287",
+  "read_warm_k=10": "7505",
+  "read_warm_k=5": "4614",
+  "update_batch_k=0,n=0": "21894",
+  "update_batch_k=0,n=10": "204915",
+  "update_batch_k=0,n=5": "114554",
+  "update_batch_n=5,k=10": "381793",
+  "update_batch_n=5,k=5": "247686",
+  "update_direct_k=0": "30434",
+  "update_direct_k=10": "91047",
+  "update_direct_k=5": "60618",
+  "verify": "1093246"
 }

@@ -33,17 +33,17 @@ The main downside of this is the complexity of execution when inserting priority
 
 ### Writing Priority Updates
 
-All write methods require at least one slot (max 255). `slots[0]` must fit in 27 bytes (216 bits), as it is packed into the base storage word alongside the timestamp and slot count. `slots[1..]` are full `uint256` values. The `updateTimestamp` is stored verbatim (truncated to 32 bits) — it is not validated against `block.timestamp`, and any write overwrites the previous value for that lane.
+All write methods require at least one slot (max 255). `slots[0]` must fit in 27 bytes (216 bits), as it is packed into the base storage word alongside the timestamp and slot count. `slots[1..]` are full `uint256` values. The `updateTimestamp` is a `uint32` stored verbatim — it is not validated against `block.timestamp`, and any write overwrites the previous value for that lane.
 
-- **`updateState(address target, uint256 laneIndex, uint256 updateTimestamp, uint256[] slots)`**
+- **`updateState(address target, uint256 laneIndex, uint32 updateTimestamp, uint256[] slots)`**
   Direct call from the authorized updater (`msg.sender` must match the stored updater for `target`).
 
 - **`batchUpdateStateWithSignature(SignedUpdate[] updates)`**
-  Batch multiple signed updates in a single transaction. Each element contains `(target, signer, laneIndex, updateTimestamp, slots, signature)`. The signature is verified against `signer` either via ECDSA recovery (EOA) or via ERC-1271 (when `signer == target`). See [Signed Updates and ERC-1271](#signed-updates-and-erc-1271).
+  Batch multiple signed updates in a single transaction. Each element contains `(address target, address signer, uint256 laneIndex, uint32 updateTimestamp, uint256[] slots, bytes signature)`. The signature is verified against `signer` either via ECDSA recovery (EOA) or via ERC-1271 (when `signer == target`). See [Signed Updates and ERC-1271](#signed-updates-and-erc-1271).
 
 ### Reading Priority Updates
 
-- **`getState(uint256 laneIndex) → (uint32 updateTimestamp, uint256[] slots)`** — called by `target` itself (`msg.sender` is the target). Never reverts. Returns the stored `updateTimestamp` (0 if no update was ever written) together with exactly the number of slots that were written (empty array if no update was ever written). Callers decide how to interpret freshness from `updateTimestamp`.
+- **`getState(uint256 laneIndex) → (uint32 updateTimestamp, uint256[] slots)`** — called by `target` itself (`msg.sender` is the target). Never reverts. Returns the stored `updateTimestamp` (`0` if no update was ever written) together with exactly the number of slots that were written (empty array if no update was ever written). Callers decide how to interpret freshness from `updateTimestamp`.
 - `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write state for `target`.
 
 ### Updater Management
@@ -65,7 +65,7 @@ Either failure reverts with `NotAuthorized`. Anyone may relay the batch.
 ### EIP-712
 
 - `DOMAIN_SEPARATOR() → bytes32`
-- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint256 updateTimestamp,uint256[] slots)")`
+- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint32 updateTimestamp,uint256[] slots)")`
 
 Note: the `signer` field in `SignedUpdate` is **not** part of the typed-data hash. It's claimed by the relayer and either checked against ECDSA recovery (must match) or used as the contract to call `isValidSignature` on (which decides for itself).
 
@@ -104,10 +104,10 @@ Gas costs are measured via `test/GasBenchmark.t.sol`.
 
 | Method | Formula |
 |---|---|
-| Direct `updateState` | `21000 + 9393 + k × 5212` |
-| Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 872 + n × (16829 + k × 5237)` |
-| `getState` (warm) | `1191 + k × 269` |
-| `getState` (cold) | `3191 + k × 2269` |
+| Direct `updateState` | `21000 + 9434 + k × 5212` |
+| Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 894 + n × (17110 + k × 5235)` |
+| `getState` (warm) | `1287 + k × 269` |
+| `getState` (cold) | `3287 + k × 2269` |
 
 Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch. The batched formula is calibrated for ECDSA-signed updates; the ERC-1271 path adds a `staticcall` whose cost depends on the target's `isValidSignature` implementation.
 
@@ -117,10 +117,10 @@ These formulas measure steady-state overwrites on already-initialized storage, w
 
 | n (updates) | n × direct txs | 1 batched tx | Savings |
 |---|---|---|---|
-| 1 | 30,393 | 38,701 | -27% |
-| 2 | 60,786 | 55,530 | 9% |
-| 5 | 151,965 | 106,017 | 31% |
-| 10 | 303,930 | 190,162 | 38% |
+| 1 | 30,434 | 39,004 | -28% |
+| 2 | 60,868 | 56,114 | 8% |
+| 5 | 152,170 | 107,444 | 30% |
+| 10 | 304,340 | 192,994 | 37% |
 
 Batching breaks even at ~2 updates and saves increasingly more as n grows.
 
