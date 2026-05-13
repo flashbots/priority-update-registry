@@ -17,13 +17,13 @@ contract GasBenchmarkTest is Test {
         return address(uint160(0x1000 + i));
     }
 
-    function _signUpdate(address t, uint256 laneIndex, uint256 ts, uint256 cid, uint256[] memory slots)
+    function _signUpdate(address t, uint256 laneIndex, uint256 ts, uint256[] memory slots)
         internal
         view
         returns (bytes memory)
     {
         bytes32 structHash = keccak256(
-            abi.encode(registry.UPDATE_TYPEHASH(), t, laneIndex, ts, cid, keccak256(abi.encodePacked(slots)))
+            abi.encode(registry.UPDATE_TYPEHASH(), t, laneIndex, ts, keccak256(abi.encodePacked(slots)))
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", registry.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(updaterKey, digest);
@@ -134,8 +134,8 @@ contract GasBenchmarkTest is Test {
         for (uint256 i = 0; i < n; i++) {
             address t = _target(i);
             uint256[] memory slots = _makeUpdateSlots(0xcc + uint32(i), k);
-            bytes memory sig = _signUpdate(t, 0, block.timestamp, block.chainid, slots);
-            updates[i] = PrioUpdateRegistry.SignedUpdate(t, 0, block.timestamp, block.chainid, slots, sig);
+            bytes memory sig = _signUpdate(t, 0, block.timestamp, slots);
+            updates[i] = PrioUpdateRegistry.SignedUpdate(t, 0, block.timestamp, slots, sig);
         }
     }
 

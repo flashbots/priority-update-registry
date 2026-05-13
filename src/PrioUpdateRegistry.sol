@@ -8,7 +8,6 @@ contract PrioUpdateRegistry is EIP712 {
     error NotAdmin();
     error NotAuthorized();
     error WrongTimestamp();
-    error WrongChainId();
     error EmptySlots();
     error Slot0Exceeds27Bytes();
     error TooManySlots();
@@ -99,11 +98,9 @@ contract PrioUpdateRegistry is EIP712 {
         address updater,
         uint256 laneIndex,
         uint256 blockTimestamp,
-        uint256 chainId,
         uint256[] calldata slots
     ) internal {
         if (blockTimestamp != block.timestamp) revert WrongTimestamp();
-        if (chainId != block.chainid) revert WrongChainId();
         if (slots.length == 0) revert EmptySlots();
         if (slots.length > 255) revert TooManySlots();
         if (slots[0] >> 216 != 0) revert Slot0Exceeds27Bytes();
@@ -126,7 +123,7 @@ contract PrioUpdateRegistry is EIP712 {
      * Writes a state update for `target` at `laneIndex` using `msg.sender` as the updater.
      */
     function updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] calldata slots) external {
-        _writeState(target, msg.sender, laneIndex, blockTimestamp, block.chainid, slots);
+        _writeState(target, msg.sender, laneIndex, blockTimestamp, slots);
     }
 
     /*
@@ -134,7 +131,7 @@ contract PrioUpdateRegistry is EIP712 {
      */
 
     bytes32 public constant UPDATE_TYPEHASH = keccak256(
-        "UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256 chainId,uint256[] slots)"
+        "UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256[] slots)"
     );
 
     function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
@@ -151,7 +148,6 @@ contract PrioUpdateRegistry is EIP712 {
         address target;
         uint256 laneIndex;
         uint256 blockTimestamp;
-        uint256 chainId;
         uint256[] slots;
         bytes signature;
     }
@@ -170,12 +166,11 @@ contract PrioUpdateRegistry is EIP712 {
                     u.target,
                     u.laneIndex,
                     u.blockTimestamp,
-                    u.chainId,
                     keccak256(abi.encodePacked(u.slots))
                 )
             );
             address signer = ECDSA.recover(_hashTypedData(structHash), u.signature);
-            _writeState(u.target, signer, u.laneIndex, u.blockTimestamp, u.chainId, u.slots);
+            _writeState(u.target, signer, u.laneIndex, u.blockTimestamp, u.slots);
         }
     }
 }

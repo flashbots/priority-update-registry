@@ -18,20 +18,20 @@ contract PrioUpdateRegistryTest is Test {
         registry = new PrioUpdateRegistry();
     }
 
-    function _signUpdate(address _target, uint256 _laneIndex, uint256 ts, uint256 cid, uint256[] memory slots)
+    function _signUpdate(address _target, uint256 _laneIndex, uint256 ts, uint256[] memory slots)
         internal
         view
         returns (bytes memory)
     {
         bytes32 structHash = keccak256(
-            abi.encode(registry.UPDATE_TYPEHASH(), _target, _laneIndex, ts, cid, keccak256(abi.encodePacked(slots)))
+            abi.encode(registry.UPDATE_TYPEHASH(), _target, _laneIndex, ts, keccak256(abi.encodePacked(slots)))
         );
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", registry.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(updaterKey, digest);
         return abi.encodePacked(r, s, v);
     }
 
-    function _makeSignedUpdate(address _target, uint256 _laneIndex, uint256 ts, uint256 cid, uint256[] memory slots)
+    function _makeSignedUpdate(address _target, uint256 _laneIndex, uint256 ts, uint256[] memory slots)
         internal
         view
         returns (PrioUpdateRegistry.SignedUpdate memory)
@@ -40,9 +40,8 @@ contract PrioUpdateRegistryTest is Test {
             target: _target,
             laneIndex: _laneIndex,
             blockTimestamp: ts,
-            chainId: cid,
             slots: slots,
-            signature: _signUpdate(_target, _laneIndex, ts, cid, slots)
+            signature: _signUpdate(_target, _laneIndex, ts, slots)
         });
     }
 
@@ -285,7 +284,7 @@ contract PrioUpdateRegistryTest is Test {
         slots[0] = 0xdeadbeef;
 
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
-        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, block.chainid, slots);
+        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, slots);
 
         registry.batchUpdateStateWithSignature(updates);
 
@@ -304,7 +303,6 @@ contract PrioUpdateRegistryTest is Test {
             target: target,
             laneIndex: 0,
             blockTimestamp: block.timestamp,
-            chainId: block.chainid,
             slots: slots,
             signature: hex"1234"
         });
@@ -325,7 +323,6 @@ contract PrioUpdateRegistryTest is Test {
                 target,
                 uint256(0),
                 block.timestamp,
-                block.chainid,
                 keccak256(abi.encodePacked(slots))
             )
         );
@@ -337,7 +334,6 @@ contract PrioUpdateRegistryTest is Test {
             target: target,
             laneIndex: 0,
             blockTimestamp: block.timestamp,
-            chainId: block.chainid,
             slots: slots,
             signature: abi.encodePacked(r, s, v)
         });
@@ -352,21 +348,9 @@ contract PrioUpdateRegistryTest is Test {
         slots[0] = 1;
 
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
-        updates[0] = _makeSignedUpdate(target, 0, block.timestamp + 1, block.chainid, slots);
+        updates[0] = _makeSignedUpdate(target, 0, block.timestamp + 1, slots);
 
         vm.expectRevert(PrioUpdateRegistry.WrongTimestamp.selector);
-        registry.batchUpdateStateWithSignature(updates);
-    }
-
-    function test_batchUpdateStateWithSignature_reverts_wrong_chainId() public {
-        registry.addUpdater(target, updater);
-        uint256[] memory slots = new uint256[](1);
-        slots[0] = 1;
-
-        PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
-        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, block.chainid + 1, slots);
-
-        vm.expectRevert(PrioUpdateRegistry.WrongChainId.selector);
         registry.batchUpdateStateWithSignature(updates);
     }
 
@@ -375,7 +359,7 @@ contract PrioUpdateRegistryTest is Test {
         uint256[] memory slots = new uint256[](0);
 
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
-        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, block.chainid, slots);
+        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, slots);
 
         vm.expectRevert(PrioUpdateRegistry.EmptySlots.selector);
         registry.batchUpdateStateWithSignature(updates);
@@ -387,7 +371,7 @@ contract PrioUpdateRegistryTest is Test {
         slots[0] = uint256(1) << 216;
 
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
-        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, block.chainid, slots);
+        updates[0] = _makeSignedUpdate(target, 0, block.timestamp, slots);
 
         vm.expectRevert(PrioUpdateRegistry.Slot0Exceeds27Bytes.selector);
         registry.batchUpdateStateWithSignature(updates);
