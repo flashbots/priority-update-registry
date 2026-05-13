@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.28;
 
 import {EIP712} from "solady/utils/EIP712.sol";
 import {ECDSA} from "solady/utils/ECDSA.sol";
@@ -13,6 +13,10 @@ contract PrioUpdateRegistry is EIP712 {
     error Slot0Exceeds27Bytes();
     error TooManySlots();
     error StateNotUpdated();
+    error ZeroAddress();
+
+    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
+    event UpdaterChanged(address indexed target, address indexed previousUpdater, address indexed newUpdater);
 
     /*
      * Admin methods
@@ -22,12 +26,16 @@ contract PrioUpdateRegistry is EIP712 {
 
     constructor() {
         admin = msg.sender;
+        emit AdminTransferred(address(0), msg.sender);
     }
 
     /* Transfers admin rights to `newAdmin`. */
     function transferAdmin(address newAdmin) external {
         if (msg.sender != admin) revert NotAdmin();
+        if (newAdmin == address(0)) revert ZeroAddress();
+        address previousAdmin = admin;
         admin = newAdmin;
+        emit AdminTransferred(previousAdmin, newAdmin);
     }
 
     /*
@@ -36,10 +44,15 @@ contract PrioUpdateRegistry is EIP712 {
     function setUpdater(address target, address updater) external {
         if (msg.sender != admin) revert NotAdmin();
         uint256 s = _updaterSlot(target);
+        uint256 previous;
+        assembly {
+            previous := sload(s)
+        }
         uint256 val = uint256(uint160(updater));
         assembly {
             sstore(s, val)
         }
+        emit UpdaterChanged(target, address(uint160(previous)), updater);
     }
 
     /*
