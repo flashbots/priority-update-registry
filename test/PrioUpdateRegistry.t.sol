@@ -5,6 +5,18 @@ import {Test} from "forge-std/Test.sol";
 import {PrioUpdateRegistry} from "../src/PrioUpdateRegistry.sol";
 import {ECDSA} from "solady/utils/ECDSA.sol";
 
+contract MockERC1271 {
+    address public owner;
+
+    constructor(address _owner) {
+        owner = _owner;
+    }
+
+    function isValidSignature(bytes32 hash, bytes calldata signature) external view returns (bytes4) {
+        return ECDSA.recoverCalldata(hash, signature) == owner ? bytes4(0x1626ba7e) : bytes4(0xffffffff);
+    }
+}
+
 contract PrioUpdateRegistryTest is Test {
     PrioUpdateRegistry registry;
     uint256 updaterKey = 0xA11CE;
@@ -37,6 +49,7 @@ contract PrioUpdateRegistryTest is Test {
     {
         return PrioUpdateRegistry.SignedUpdate({
             target: _target,
+            signer: updater,
             laneIndex: _laneIndex,
             blockTimestamp: ts,
             slots: slots,
@@ -294,6 +307,7 @@ contract PrioUpdateRegistryTest is Test {
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
         updates[0] = PrioUpdateRegistry.SignedUpdate({
             target: target,
+            signer: updater,
             laneIndex: 0,
             blockTimestamp: block.timestamp,
             slots: slots,
@@ -322,9 +336,104 @@ contract PrioUpdateRegistryTest is Test {
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", registry.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, digest);
 
+        address wrongSigner = vm.addr(wrongKey);
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
         updates[0] = PrioUpdateRegistry.SignedUpdate({
             target: target,
+            signer: wrongSigner,
+            laneIndex: 0,
+            blockTimestamp: block.timestamp,
+            slots: slots,
+            signature: abi.encodePacked(r, s, v)
+        });
+
+        vm.expectRevert(PrioUpdateRegistry.NotAuthorized.selector);
+        registry.batchUpdateStateWithSignature(updates);
+    }
+
+    function test_batchUpdateStateWithSignature_reverts_signer_mismatch() public {
+        _addUpdater(target, updater);
+        uint256 wrongKey = 0xB0B;
+        address wrongSigner = vm.addr(wrongKey);
+        _addUpdater(target, wrongSigner);
+
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 1;
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                registry.UPDATE_TYPEHASH(),
+                target,
+                uint256(0),
+                block.timestamp,
+                keccak256(abi.encodePacked(slots))
+            )
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", registry.DOMAIN_SEPARATOR(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, digest);
+
+        PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
+        updates[0] = PrioUpdateRegistry.SignedUpdate({
+            target: target,
+            signer: updater,
+            laneIndex: 0,
+            blockTimestamp: block.timestamp,
+            slots: slots,
+            signature: abi.encodePacked(r, s, v)
+        });
+
+        vm.expectRevert(PrioUpdateRegistry.NotAuthorized.selector);
+        registry.batchUpdateStateWithSignature(updates);
+    }
+
+    function test_batchUpdateStateWithSignature_erc1271() public {
+        MockERC1271 wallet = new MockERC1271(updater);
+        address walletAddr = address(wallet);
+
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 0xcafe;
+
+        PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
+        updates[0] = PrioUpdateRegistry.SignedUpdate({
+            target: walletAddr,
+            signer: walletAddr,
+            laneIndex: 0,
+            blockTimestamp: block.timestamp,
+            slots: slots,
+            signature: _signUpdate(walletAddr, 0, block.timestamp, slots)
+        });
+
+        registry.batchUpdateStateWithSignature(updates);
+
+        vm.prank(walletAddr);
+        uint256[] memory got = registry.getState(0);
+        assertEq(got[0], slots[0]);
+    }
+
+    function test_batchUpdateStateWithSignature_erc1271_reverts_invalid() public {
+        MockERC1271 wallet = new MockERC1271(updater);
+        address walletAddr = address(wallet);
+
+        uint256 wrongKey = 0xB0B;
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 1;
+
+        bytes32 structHash = keccak256(
+            abi.encode(
+                registry.UPDATE_TYPEHASH(),
+                walletAddr,
+                uint256(0),
+                block.timestamp,
+                keccak256(abi.encodePacked(slots))
+            )
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\x19\x01", registry.DOMAIN_SEPARATOR(), structHash));
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(wrongKey, digest);
+
+        PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
+        updates[0] = PrioUpdateRegistry.SignedUpdate({
+            target: walletAddr,
+            signer: walletAddr,
             laneIndex: 0,
             blockTimestamp: block.timestamp,
             slots: slots,

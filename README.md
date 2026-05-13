@@ -25,7 +25,7 @@ The main downside of this is the complexity of execution when inserting priority
 
 ### Priority Updates
 
-- Each target contract has exactly one authorized updater address that can publish priority updates. Authorized updater must be an EOA.
+- Each target manages its own set of authorized updaters. An updater can be an EOA or, via ERC-1271, a smart contract wallet (see [Signed Updates and ERC-1271](#signed-updates-and-erc-1271)).
 - A priority update consists of a 27-byte (216-bit) base value plus k additional 32-byte slots. Each additional slot increases the gas cost of an update. The number of slots is stored on-chain (max 255).
 - Each target can have multiple independent **lanes** (identified by `laneIndex`). Updates to different lanes are independent — they land separately and have separate freshness.
 - A priority update is only valid for the block that it targets.
@@ -39,7 +39,7 @@ All write methods require `blockTimestamp == block.timestamp`, `chainId == block
   Direct call from the authorized updater (`msg.sender` must match the stored updater for `target`).
 
 - **`batchUpdateStateWithSignature(SignedUpdate[] updates)`**
-  Batch multiple signed updates in a single transaction. The updater is recovered from an EIP-712 signature. Each element contains `(target, laneIndex, blockTimestamp, chainId, slots, signature)`.
+  Batch multiple signed updates in a single transaction. Each element contains `(target, signer, laneIndex, blockTimestamp, slots, signature)`. The signature is verified against `signer` either via ECDSA recovery (EOA) or via ERC-1271 (when `signer == target`). See [Signed Updates and ERC-1271](#signed-updates-and-erc-1271).
 
 ### Reading Priority Updates
 
@@ -53,21 +53,31 @@ Each target manages its own set of updaters. Authorizations are scoped to `msg.s
 - `addUpdater(address updater)` — authorize `updater` to write state for `msg.sender`.
 - `removeUpdater(address updater)` — revoke `updater`'s authorization for `msg.sender`.
 
+### Signed Updates and ERC-1271
+
+Each `SignedUpdate` carries an explicit `signer`. Verification dispatches on `signer == target`:
+
+- **`signer != target`** — ECDSA: `ecrecover(digest, signature)` must equal `signer`, and `isUpdater[target][signer]` must be `true`.
+- **`signer == target`** — [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271): `target.isValidSignature(digest, signature)` must return `0x1626ba7e`. No `addUpdater` registration needed — the target authorizes by signing.
+
+Either failure reverts with `NotAuthorized`. Anyone may relay the batch.
 
 ### EIP-712
 
 - `DOMAIN_SEPARATOR() → bytes32`
-- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256 chainId,uint256[] slots)")`
+- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256[] slots)")`
+
+Note: the `signer` field in `SignedUpdate` is **not** part of the typed-data hash. It's claimed by the relayer and either checked against ECDSA recovery (must match) or used as the contract to call `isValidSignature` on (which decides for itself).
 
 Domain name: `"PrioUpdateRegistry"`, version: `"1"`.
 
 ## Storage Layout
 
-**Updater storage.** Each target's authorized updater is stored at:
+**Updater storage.** `isUpdater` is a nested mapping at storage slot `0`:
 
 ```
-slot = 0x02 << 248 | uint160(target)
-value = uint160(updater)
+slot = keccak256(abi.encode(updater, keccak256(abi.encode(target, 0))))
+value = 1 if authorized, else 0
 ```
 
 **Lane state storage.** Each (target, laneIndex) pair has a contiguous range of slots:
@@ -94,12 +104,12 @@ Gas costs are measured via `test/GasBenchmark.t.sol`.
 
 | Method | Formula |
 |---|---|
-| Direct `updateState` | `21000 + 9351 + k × 5212` |
-| Batched `batchUpdateStateWithSignature` | `21000 + 872 + n × (15806 + k × 5238)` |
-| `getState` (warm) | `1236 + k × 269` |
-| `getState` (cold) | `3236 + k × 2269` |
+| Direct `updateState` | `21000 + 9393 + k × 5212` |
+| Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 872 + n × (16829 + k × 5237)` |
+| `getState` (warm) | `1191 + k × 269` |
+| `getState` (cold) | `3191 + k × 2269` |
 
-Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch.
+Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch. The batched formula is calibrated for ECDSA-signed updates; the ERC-1271 path adds a `staticcall` whose cost depends on the target's `isValidSignature` implementation.
 
 These formulas measure steady-state overwrites on already-initialized storage, which is the benchmark setup used in `test/GasBenchmark.t.sol`. They do not model first writes or cases where a write grows into previously zero slots, which are more expensive because they include zero-to-nonzero `SSTORE`s.
 
@@ -107,10 +117,10 @@ These formulas measure steady-state overwrites on already-initialized storage, w
 
 | n (updates) | n × direct txs | 1 batched tx | Savings |
 |---|---|---|---|
-| 1 | 30,351 | 37,678 | -24% |
-| 2 | 60,702 | 53,484 | 12% |
-| 5 | 151,755 | 100,902 | 34% |
-| 10 | 303,510 | 179,932 | 41% |
+| 1 | 30,393 | 38,701 | -27% |
+| 2 | 60,786 | 55,530 | 9% |
+| 5 | 151,965 | 106,017 | 31% |
+| 10 | 303,930 | 190,162 | 38% |
 
 Batching breaks even at ~2 updates and saves increasingly more as n grows.
 

@@ -3,6 +3,7 @@ pragma solidity ^0.8.28;
 
 import {EIP712} from "solady/utils/EIP712.sol";
 import {ECDSA} from "solady/utils/ECDSA.sol";
+import {SignatureCheckerLib} from "solady/utils/SignatureCheckerLib.sol";
 
 contract PrioUpdateRegistry is EIP712 {
     error NotAuthorized();
@@ -70,7 +71,6 @@ contract PrioUpdateRegistry is EIP712 {
 
     function _writeState(
         address target,
-        address updater,
         uint256 laneIndex,
         uint256 blockTimestamp,
         uint256[] calldata slots
@@ -79,8 +79,6 @@ contract PrioUpdateRegistry is EIP712 {
         if (slots.length == 0) revert EmptySlots();
         if (slots.length > 255) revert TooManySlots();
         if (slots[0] >> 216 != 0) revert Slot0Exceeds27Bytes();
-
-        if (!isUpdater[target][updater]) revert NotAuthorized();
 
         uint256 base = _laneSlot0Index(target, laneIndex);
         uint256 first = (uint256(uint32(blockTimestamp)) << 224) | (slots.length << 216) | slots[0];
@@ -98,7 +96,8 @@ contract PrioUpdateRegistry is EIP712 {
      * Writes a state update for `target` at `laneIndex` using `msg.sender` as the updater.
      */
     function updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] calldata slots) external {
-        _writeState(target, msg.sender, laneIndex, blockTimestamp, slots);
+        if (!isUpdater[target][msg.sender]) revert NotAuthorized();
+        _writeState(target, laneIndex, blockTimestamp, slots);
     }
 
     /*
@@ -121,6 +120,7 @@ contract PrioUpdateRegistry is EIP712 {
 
     struct SignedUpdate {
         address target;
+        address signer;
         uint256 laneIndex;
         uint256 blockTimestamp;
         uint256[] slots;
@@ -131,6 +131,8 @@ contract PrioUpdateRegistry is EIP712 {
      * Applies a batch of signed updates.
      * Anyone may relay the batch. Each update is validated independently and the whole call
      * reverts on the first invalid signature or invalid input.
+     * If `signer == target`, the signature is verified via ERC-1271 against `target`.
+     * Otherwise, `signer` must be the ECDSA-recovered address.
      */
     function batchUpdateStateWithSignature(SignedUpdate[] calldata updates) external {
         for (uint256 i = 0; i < updates.length; i++) {
@@ -144,8 +146,16 @@ contract PrioUpdateRegistry is EIP712 {
                     keccak256(abi.encodePacked(u.slots))
                 )
             );
-            address signer = ECDSA.recover(_hashTypedData(structHash), u.signature);
-            _writeState(u.target, signer, u.laneIndex, u.blockTimestamp, u.slots);
+            bytes32 digest = _hashTypedData(structHash);
+            if (u.signer == u.target) {
+                if (!SignatureCheckerLib.isValidERC1271SignatureNowCalldata(u.target, digest, u.signature)) {
+                    revert NotAuthorized();
+                }
+            } else {
+                if (!isUpdater[u.target][u.signer]) revert NotAuthorized();
+                if (ECDSA.recoverCalldata(digest, u.signature) != u.signer) revert NotAuthorized();
+            }
+            _writeState(u.target, u.laneIndex, u.blockTimestamp, u.slots);
         }
     }
 }

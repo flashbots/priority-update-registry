@@ -61,21 +61,21 @@ contract GasBenchmarkTest is Test {
 
     function estimateUpdateGas(uint256 k) internal pure returns (uint256) {
         /// 21000 + A0 + k * A1
-        return 21000 + 9411 + k * 5212;
+        return 21000 + 9393 + k * 5212;
     }
 
     function estimateBatchSigGas(uint256 n, uint256 k) internal pure returns (uint256) {
         /// 21000 + B0 + n*(B1 + k * B2)
-        return 21000 + 894 + n * (15866 + k * 5238);
+        return 21000 + 872 + n * (16829 + k * 5237);
     }
 
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {
         if (warm) {
             /// C0 + C1*k
-            return 1236 + 269 * k;
+            return 1191 + 269 * k;
         } else {
             /// D0 + D1*k
-            return 3236 + 2269 * k;
+            return 3191 + 2269 * k;
         }
     }
 
@@ -137,7 +137,7 @@ contract GasBenchmarkTest is Test {
             address t = _target(i);
             uint256[] memory slots = _makeUpdateSlots(0xcc + uint32(i), k);
             bytes memory sig = _signUpdate(t, 0, block.timestamp, slots);
-            updates[i] = PrioUpdateRegistry.SignedUpdate(t, 0, block.timestamp, slots, sig);
+            updates[i] = PrioUpdateRegistry.SignedUpdate(t, updater, 0, block.timestamp, slots, sig);
         }
     }
 
