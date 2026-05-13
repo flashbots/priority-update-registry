@@ -5,60 +5,35 @@ import {EIP712} from "solady/utils/EIP712.sol";
 import {ECDSA} from "solady/utils/ECDSA.sol";
 
 contract PrioUpdateRegistry is EIP712 {
-    error NotAdmin();
     error NotAuthorized();
     error WrongTimestamp();
     error EmptySlots();
     error Slot0Exceeds27Bytes();
     error TooManySlots();
     error StateNotUpdated();
-    error ZeroAddress();
 
-    event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
     event UpdaterAdded(address indexed target, address indexed updater);
     event UpdaterRemoved(address indexed target, address indexed updater);
 
-    /*
-     * Admin methods
-     */
-    /* Admin that can assign updaters and transfer admin rights. */
-    address public admin;
-
-    /* Authorized updaters per target. */
+    /* Authorized updaters per target. The target itself manages its updaters. */
     mapping(address target => mapping(address updater => bool)) public isUpdater;
 
-    constructor() {
-        admin = msg.sender;
-        emit AdminTransferred(address(0), msg.sender);
-    }
-
-    /* Transfers admin rights to `newAdmin`. */
-    function transferAdmin(address newAdmin) external {
-        if (msg.sender != admin) revert NotAdmin();
-        if (newAdmin == address(0)) revert ZeroAddress();
-        address previousAdmin = admin;
-        admin = newAdmin;
-        emit AdminTransferred(previousAdmin, newAdmin);
+    /*
+     * Authorizes `updater` to write state for `msg.sender`.
+     */
+    function addUpdater(address updater) external {
+        if (isUpdater[msg.sender][updater]) return;
+        isUpdater[msg.sender][updater] = true;
+        emit UpdaterAdded(msg.sender, updater);
     }
 
     /*
-     * Authorizes `updater` to write state for `target`.
+     * Revokes authorization for `updater` to write state for `msg.sender`.
      */
-    function addUpdater(address target, address updater) external {
-        if (msg.sender != admin) revert NotAdmin();
-        if (isUpdater[target][updater]) return;
-        isUpdater[target][updater] = true;
-        emit UpdaterAdded(target, updater);
-    }
-
-    /*
-     * Revokes authorization for `updater` to write state for `target`.
-     */
-    function removeUpdater(address target, address updater) external {
-        if (msg.sender != admin) revert NotAdmin();
-        if (!isUpdater[target][updater]) return;
-        isUpdater[target][updater] = false;
-        emit UpdaterRemoved(target, updater);
+    function removeUpdater(address updater) external {
+        if (!isUpdater[msg.sender][updater]) return;
+        isUpdater[msg.sender][updater] = false;
+        emit UpdaterRemoved(msg.sender, updater);
     }
 
     /*

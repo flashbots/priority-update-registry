@@ -45,13 +45,15 @@ contract GasBenchmarkTest is Test {
 
         uint256[] memory slots = _makeUpdateSlots(0xdead, MAX_K);
 
-        registry.addUpdater(target, updater);
+        vm.prank(target);
+        registry.addUpdater(updater);
         vm.prank(updater);
         registry.updateState(target, 0, block.timestamp, slots);
 
         for (uint256 n = 0; n < MAX_N; n++) {
             address t = _target(n);
-            registry.addUpdater(t, updater);
+            vm.prank(t);
+            registry.addUpdater(updater);
             vm.prank(updater);
             registry.updateState(t, 0, block.timestamp, slots);
         }

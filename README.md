@@ -44,13 +44,14 @@ All write methods require `blockTimestamp == block.timestamp`, `chainId == block
 ### Reading Priority Updates
 
 - **`getState(uint256 laneIndex) → uint256[]`** — called by `target` itself (`msg.sender` is the target). Reverts if no priority update was written in the current block for the given lane. Returns exactly the number of slots that were written.
-- `getUpdater(address target) → address` — returns the authorized updater for `target`.
+- `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write state for `target`.
 
-### Admin
+### Updater Management
 
-- `admin() → address` — current admin.
-- `transferAdmin(address newAdmin)` — transfer admin role. Only callable by current admin.
-- `setUpdater(address target, address updater)` — authorize `updater` to write state for `target`. Only callable by admin.
+Each target manages its own set of updaters. Authorizations are scoped to `msg.sender`.
+
+- `addUpdater(address updater)` — authorize `updater` to write state for `msg.sender`.
+- `removeUpdater(address updater)` — revoke `updater`'s authorization for `msg.sender`.
 
 
 ### EIP-712
@@ -136,7 +137,7 @@ We suggest this approach to applying priority update in the builder.
 2. Prohibit priority updates from landing in the block except if the builder explicitly inserts them.
 3. When simulating a user transaction that needs a priority update, apply it directly to the state that EVM reads.
 4. After a user transaction is executed, a priority update transaction can be inserted in front of the user transaction (e.g. batched on top of block). This is safe to do since only the builder is allowed to modify the registry contract and all priority updates are non-conflicting with other transactions in the block.
-5. Allow admin smart contract transactions that change this state to land at the bottom of the block.
+5. Allow transactions that change the updater set (`addUpdater`/`removeUpdater`) to land at the bottom of the block.
 
 ## Testing
 
