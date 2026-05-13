@@ -45,13 +45,13 @@ contract GasBenchmarkTest is Test {
 
         uint256[] memory slots = _makeUpdateSlots(0xdead, MAX_K);
 
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         vm.prank(updater);
         registry.updateState(target, 0, block.timestamp, slots);
 
         for (uint256 n = 0; n < MAX_N; n++) {
             address t = _target(n);
-            registry.setUpdater(t, updater);
+            registry.addUpdater(t, updater);
             vm.prank(updater);
             registry.updateState(t, 0, block.timestamp, slots);
         }
@@ -59,12 +59,12 @@ contract GasBenchmarkTest is Test {
 
     function estimateUpdateGas(uint256 k) internal pure returns (uint256) {
         /// 21000 + A0 + k * A1
-        return 21000 + 9351 + k * 5212;
+        return 21000 + 9411 + k * 5212;
     }
 
     function estimateBatchSigGas(uint256 n, uint256 k) internal pure returns (uint256) {
         /// 21000 + B0 + n*(B1 + k * B2)
-        return 21000 + 872 + n * (15806 + k * 5238);
+        return 21000 + 894 + n * (15866 + k * 5238);
     }
 
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {

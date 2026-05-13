@@ -16,13 +16,17 @@ contract PrioUpdateRegistry is EIP712 {
     error ZeroAddress();
 
     event AdminTransferred(address indexed previousAdmin, address indexed newAdmin);
-    event UpdaterChanged(address indexed target, address indexed previousUpdater, address indexed newUpdater);
+    event UpdaterAdded(address indexed target, address indexed updater);
+    event UpdaterRemoved(address indexed target, address indexed updater);
 
     /*
      * Admin methods
      */
     /* Admin that can assign updaters and transfer admin rights. */
     address public admin;
+
+    /* Authorized updaters per target. */
+    mapping(address target => mapping(address updater => bool)) public isUpdater;
 
     constructor() {
         admin = msg.sender;
@@ -39,20 +43,23 @@ contract PrioUpdateRegistry is EIP712 {
     }
 
     /*
-     * Sets the authorized updater for `target`.
+     * Authorizes `updater` to write state for `target`.
      */
-    function setUpdater(address target, address updater) external {
+    function addUpdater(address target, address updater) external {
         if (msg.sender != admin) revert NotAdmin();
-        uint256 s = _updaterSlot(target);
-        uint256 previous;
-        assembly {
-            previous := sload(s)
-        }
-        uint256 val = uint256(uint160(updater));
-        assembly {
-            sstore(s, val)
-        }
-        emit UpdaterChanged(target, address(uint160(previous)), updater);
+        if (isUpdater[target][updater]) return;
+        isUpdater[target][updater] = true;
+        emit UpdaterAdded(target, updater);
+    }
+
+    /*
+     * Revokes authorization for `updater` to write state for `target`.
+     */
+    function removeUpdater(address target, address updater) external {
+        if (msg.sender != admin) revert NotAdmin();
+        if (!isUpdater[target][updater]) return;
+        isUpdater[target][updater] = false;
+        emit UpdaterRemoved(target, updater);
     }
 
     /*
@@ -83,20 +90,6 @@ contract PrioUpdateRegistry is EIP712 {
         return result;
     }
 
-    /* Returns the authorized updater for `target`. */
-    function getUpdater(address target) external view returns (address) {
-        uint256 s = _updaterSlot(target);
-        uint256 v;
-        assembly {
-            v := sload(s)
-        }
-        return address(uint160(v));
-    }
-
-    function _updaterSlot(address target) internal pure returns (uint256) {
-        return (uint256(0x02) << 248) | uint256(uint160(target));
-    }
-
     function _laneSlot0Index(address target, uint256 laneIndex) internal pure returns (uint256) {
         return uint256(keccak256(abi.encode(target, laneIndex)));
     }
@@ -115,12 +108,7 @@ contract PrioUpdateRegistry is EIP712 {
         if (slots.length > 255) revert TooManySlots();
         if (slots[0] >> 216 != 0) revert Slot0Exceeds27Bytes();
 
-        uint256 s = _updaterSlot(target);
-        uint256 storedUpdater;
-        assembly {
-            storedUpdater := sload(s)
-        }
-        if (updater != address(uint160(storedUpdater))) revert NotAuthorized();
+        if (!isUpdater[target][updater]) revert NotAuthorized();
 
         uint256 base = _laneSlot0Index(target, laneIndex);
         uint256 first = (uint256(uint32(blockTimestamp)) << 224) | (slots.length << 216) | slots[0];

@@ -50,15 +50,72 @@ contract PrioUpdateRegistryTest is Test {
         assertEq(registry.admin(), admin);
     }
 
-    function test_setUpdater() public {
-        registry.setUpdater(target, updater);
-        assertEq(registry.getUpdater(target), updater);
+    function test_addUpdater() public {
+        registry.addUpdater(target, updater);
+        assertTrue(registry.isUpdater(target, updater));
     }
 
-    function test_setUpdater_reverts_non_admin() public {
+    function test_addUpdater_reverts_non_admin() public {
         vm.prank(nobody);
         vm.expectRevert(PrioUpdateRegistry.NotAdmin.selector);
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
+    }
+
+    function test_removeUpdater() public {
+        registry.addUpdater(target, updater);
+        registry.removeUpdater(target, updater);
+        assertFalse(registry.isUpdater(target, updater));
+    }
+
+    function test_removeUpdater_reverts_non_admin() public {
+        registry.addUpdater(target, updater);
+        vm.prank(nobody);
+        vm.expectRevert(PrioUpdateRegistry.NotAdmin.selector);
+        registry.removeUpdater(target, updater);
+    }
+
+    function test_multiple_updaters_per_target() public {
+        address updater2 = address(0xBEEF);
+        registry.addUpdater(target, updater);
+        registry.addUpdater(target, updater2);
+
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 0x1;
+        vm.prank(updater);
+        registry.updateState(target, 0, block.timestamp, slots);
+
+        slots[0] = 0x2;
+        vm.prank(updater2);
+        registry.updateState(target, 0, block.timestamp, slots);
+
+        vm.prank(target);
+        uint256[] memory got = registry.getState(0);
+        assertEq(got[0], 0x2);
+    }
+
+    function test_addUpdater_noop_when_already_authorized() public {
+        registry.addUpdater(target, updater);
+        vm.recordLogs();
+        registry.addUpdater(target, updater);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertTrue(registry.isUpdater(target, updater));
+    }
+
+    function test_removeUpdater_noop_when_not_authorized() public {
+        vm.recordLogs();
+        registry.removeUpdater(target, updater);
+        assertEq(vm.getRecordedLogs().length, 0);
+        assertFalse(registry.isUpdater(target, updater));
+    }
+
+    function test_removed_updater_cannot_update() public {
+        registry.addUpdater(target, updater);
+        registry.removeUpdater(target, updater);
+
+        uint256[] memory slots = new uint256[](1);
+        vm.prank(updater);
+        vm.expectRevert(PrioUpdateRegistry.NotAuthorized.selector);
+        registry.updateState(target, 0, block.timestamp, slots);
     }
 
     function test_transferAdmin() public {
@@ -73,7 +130,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updateState_and_getState_single_slot() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = 0xdeadbeef;
 
@@ -86,7 +143,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updateState_and_getState_multi_slot() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](3);
         slots[0] = 0xaabbccdd;
         slots[1] = 0x1111111111111111;
@@ -104,7 +161,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updateState_reverts_unauthorized() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
 
         vm.prank(nobody);
@@ -113,7 +170,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updateState_reverts_wrong_timestamp() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
 
         vm.prank(updater);
@@ -122,7 +179,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updateState_reverts_empty_slots() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](0);
 
         vm.prank(updater);
@@ -131,7 +188,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updateState_reverts_slot0_too_large() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = uint256(1) << 216;
 
@@ -141,7 +198,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_getState_reverts_stale() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
 
         vm.prank(updater);
@@ -160,7 +217,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_overwrite_state_same_block() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots1 = new uint256[](1);
         slots1[0] = 0xaa;
         uint256[] memory slots2 = new uint256[](1);
@@ -178,18 +235,18 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_updater_preserved_after_update() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = 0xff;
 
         vm.prank(updater);
         registry.updateState(target, 0, block.timestamp, slots);
 
-        assertEq(registry.getUpdater(target), updater);
+        assertTrue(registry.isUpdater(target, updater));
     }
 
     function test_independent_lanes() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
 
         uint256[] memory slots0 = new uint256[](1);
         slots0[0] = 0xaa;
@@ -223,7 +280,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_and_getState_single_slot() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = 0xdeadbeef;
 
@@ -238,7 +295,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_reverts_invalid_signature() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = 1;
 
@@ -257,7 +314,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_reverts_unauthorized_signer() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256 wrongKey = 0xB0B;
         uint256[] memory slots = new uint256[](1);
         slots[0] = 1;
@@ -290,7 +347,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_reverts_wrong_timestamp() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = 1;
 
@@ -302,7 +359,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_reverts_wrong_chainId() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = 1;
 
@@ -314,7 +371,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_reverts_empty_slots() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](0);
 
         PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
@@ -325,7 +382,7 @@ contract PrioUpdateRegistryTest is Test {
     }
 
     function test_batchUpdateStateWithSignature_reverts_slot0_too_large() public {
-        registry.setUpdater(target, updater);
+        registry.addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
         slots[0] = uint256(1) << 216;
 

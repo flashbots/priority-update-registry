@@ -5,13 +5,13 @@
   "read_warm_k=0": "1236",
   "read_warm_k=10": "7383",
   "read_warm_k=5": "4492",
-  "update_batch_k=0,n=0": "21872",
-  "update_batch_k=0,n=10": "191592",
-  "update_batch_k=0,n=5": "107871",
-  "update_batch_n=5,k=10": "375148",
-  "update_batch_n=5,k=5": "240981",
-  "update_direct_k=0": "30351",
-  "update_direct_k=10": "90958",
-  "update_direct_k=5": "60529",
-  "verify": "1055411"
+  "update_batch_k=0,n=0": "21894",
+  "update_batch_k=0,n=10": "192214",
+  "update_batch_k=0,n=5": "108193",
+  "update_batch_n=5,k=10": "375470",
+  "update_batch_n=5,k=5": "241303",
+  "update_direct_k=0": "30411",
+  "update_direct_k=10": "91018",
+  "update_direct_k=5": "60589",
+  "verify": "1056335"
 }
