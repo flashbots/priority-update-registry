@@ -7,11 +7,9 @@ import {SignatureCheckerLib} from "solady/utils/SignatureCheckerLib.sol";
 
 contract PrioUpdateRegistry is EIP712 {
     error NotAuthorized();
-    error WrongTimestamp();
     error EmptySlots();
     error Slot0Exceeds27Bytes();
     error TooManySlots();
-    error StateNotUpdated();
 
     event UpdaterAdded(address indexed target, address indexed updater);
     event UpdaterRemoved(address indexed target, address indexed updater);
@@ -42,27 +40,27 @@ contract PrioUpdateRegistry is EIP712 {
      */
 
     /*
-     * Returns the current block's state for `msg.sender` at the given `laneIndex`.
-     * Slot 0 freshness is checked via the packed timestamp.
-     * The number of slots returned matches the number that were written.
+     * Returns the stored state for `msg.sender` at the given `laneIndex` together with the
+     * timestamp it was last written for. Callers decide how to interpret freshness.
+     * The number of slots returned matches the number that were written; an empty array
+     * means no update has ever been written for this lane.
      */
-    function getState(uint256 laneIndex) external view returns (uint256[] memory) {
+    function getState(uint256 laneIndex) external view returns (uint32 updateTimestamp, uint256[] memory slots) {
         uint256 base = _laneSlot0Index(msg.sender, laneIndex);
         uint256 first;
         assembly {
             first := sload(base)
         }
-        if (uint32(first >> 224) != uint32(block.timestamp)) revert StateNotUpdated();
-
+        updateTimestamp = uint32(first >> 224);
         uint256 numSlots = uint8(first >> 216);
-        uint256[] memory result = new uint256[](numSlots);
-        result[0] = uint216(first);
+        slots = new uint256[](numSlots);
+        if (numSlots == 0) return (updateTimestamp, slots);
+        slots[0] = uint216(first);
         for (uint256 i = 1; i < numSlots; i++) {
             assembly {
-                mstore(add(add(result, 32), mul(i, 32)), sload(add(base, i)))
+                mstore(add(add(slots, 32), mul(i, 32)), sload(add(base, i)))
             }
         }
-        return result;
     }
 
     function _laneSlot0Index(address target, uint256 laneIndex) internal pure returns (uint256) {
@@ -72,16 +70,15 @@ contract PrioUpdateRegistry is EIP712 {
     function _writeState(
         address target,
         uint256 laneIndex,
-        uint256 blockTimestamp,
+        uint256 updateTimestamp,
         uint256[] calldata slots
     ) internal {
-        if (blockTimestamp != block.timestamp) revert WrongTimestamp();
         if (slots.length == 0) revert EmptySlots();
         if (slots.length > 255) revert TooManySlots();
         if (slots[0] >> 216 != 0) revert Slot0Exceeds27Bytes();
 
         uint256 base = _laneSlot0Index(target, laneIndex);
-        uint256 first = (uint256(uint32(blockTimestamp)) << 224) | (slots.length << 216) | slots[0];
+        uint256 first = (uint256(uint32(updateTimestamp)) << 224) | (slots.length << 216) | slots[0];
         assembly {
             sstore(base, first)
         }
@@ -95,9 +92,9 @@ contract PrioUpdateRegistry is EIP712 {
     /*
      * Writes a state update for `target` at `laneIndex` using `msg.sender` as the updater.
      */
-    function updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] calldata slots) external {
+    function updateState(address target, uint256 laneIndex, uint256 updateTimestamp, uint256[] calldata slots) external {
         if (!isUpdater[target][msg.sender]) revert NotAuthorized();
-        _writeState(target, laneIndex, blockTimestamp, slots);
+        _writeState(target, laneIndex, updateTimestamp, slots);
     }
 
     /*
@@ -105,7 +102,7 @@ contract PrioUpdateRegistry is EIP712 {
      */
 
     bytes32 public constant UPDATE_TYPEHASH = keccak256(
-        "UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256[] slots)"
+        "UpdateState(address target,uint256 laneIndex,uint256 updateTimestamp,uint256[] slots)"
     );
 
     function _domainNameAndVersion() internal pure override returns (string memory name, string memory version) {
@@ -122,7 +119,7 @@ contract PrioUpdateRegistry is EIP712 {
         address target;
         address signer;
         uint256 laneIndex;
-        uint256 blockTimestamp;
+        uint256 updateTimestamp;
         uint256[] slots;
         bytes signature;
     }
@@ -142,7 +139,7 @@ contract PrioUpdateRegistry is EIP712 {
                     UPDATE_TYPEHASH,
                     u.target,
                     u.laneIndex,
-                    u.blockTimestamp,
+                    u.updateTimestamp,
                     keccak256(abi.encodePacked(u.slots))
                 )
             );
@@ -155,7 +152,7 @@ contract PrioUpdateRegistry is EIP712 {
                 if (!isUpdater[u.target][u.signer]) revert NotAuthorized();
                 if (ECDSA.recoverCalldata(digest, u.signature) != u.signer) revert NotAuthorized();
             }
-            _writeState(u.target, u.laneIndex, u.blockTimestamp, u.slots);
+            _writeState(u.target, u.laneIndex, u.updateTimestamp, u.slots);
         }
     }
 }

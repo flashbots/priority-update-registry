@@ -27,23 +27,23 @@ The main downside of this is the complexity of execution when inserting priority
 
 - Each target manages its own set of authorized updaters. An updater can be an EOA or, via ERC-1271, a smart contract wallet (see [Signed Updates and ERC-1271](#signed-updates-and-erc-1271)).
 - A priority update consists of a 27-byte (216-bit) base value plus k additional 32-byte slots. Each additional slot increases the gas cost of an update. The number of slots is stored on-chain (max 255).
-- Each target can have multiple independent **lanes** (identified by `laneIndex`). Updates to different lanes are independent — they land separately and have separate freshness.
-- A priority update is only valid for the block that it targets.
+- Each target can have multiple independent **lanes** (identified by `laneIndex`). Updates to different lanes are independent — they land separately and carry their own timestamp.
+- Each update carries an `updateTimestamp` chosen by the writer, stored alongside the data and returned to readers so they can decide whether to act on it.
 - Priority updates can only be read by the target contract itself (via `msg.sender`).
 
 ### Writing Priority Updates
 
-All write methods require `blockTimestamp == block.timestamp`, `chainId == block.chainid`, and at least one slot (max 255). `slots[0]` must fit in 27 bytes (216 bits), as it is packed into the base storage word alongside the timestamp and slot count. `slots[1..]` are full `uint256` values. Writes overwrite only the supplied slots.
+All write methods require at least one slot (max 255). `slots[0]` must fit in 27 bytes (216 bits), as it is packed into the base storage word alongside the timestamp and slot count. `slots[1..]` are full `uint256` values. The `updateTimestamp` is stored verbatim (truncated to 32 bits) — it is not validated against `block.timestamp`, and any write overwrites the previous value for that lane.
 
-- **`updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] slots)`**
+- **`updateState(address target, uint256 laneIndex, uint256 updateTimestamp, uint256[] slots)`**
   Direct call from the authorized updater (`msg.sender` must match the stored updater for `target`).
 
 - **`batchUpdateStateWithSignature(SignedUpdate[] updates)`**
-  Batch multiple signed updates in a single transaction. Each element contains `(target, signer, laneIndex, blockTimestamp, slots, signature)`. The signature is verified against `signer` either via ECDSA recovery (EOA) or via ERC-1271 (when `signer == target`). See [Signed Updates and ERC-1271](#signed-updates-and-erc-1271).
+  Batch multiple signed updates in a single transaction. Each element contains `(target, signer, laneIndex, updateTimestamp, slots, signature)`. The signature is verified against `signer` either via ECDSA recovery (EOA) or via ERC-1271 (when `signer == target`). See [Signed Updates and ERC-1271](#signed-updates-and-erc-1271).
 
 ### Reading Priority Updates
 
-- **`getState(uint256 laneIndex) → uint256[]`** — called by `target` itself (`msg.sender` is the target). Reverts if no priority update was written in the current block for the given lane. Returns exactly the number of slots that were written.
+- **`getState(uint256 laneIndex) → (uint32 updateTimestamp, uint256[] slots)`** — called by `target` itself (`msg.sender` is the target). Never reverts. Returns the stored `updateTimestamp` (0 if no update was ever written) together with exactly the number of slots that were written (empty array if no update was ever written). Callers decide how to interpret freshness from `updateTimestamp`.
 - `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write state for `target`.
 
 ### Updater Management
@@ -65,7 +65,7 @@ Either failure reverts with `NotAuthorized`. Anyone may relay the batch.
 ### EIP-712
 
 - `DOMAIN_SEPARATOR() → bytes32`
-- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint256 blockTimestamp,uint256[] slots)")`
+- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint256 updateTimestamp,uint256[] slots)")`
 
 Note: the `signer` field in `SignedUpdate` is **not** part of the typed-data hash. It's claimed by the relayer and either checked against ECDSA recovery (must match) or used as the contract to call `isValidSignature` on (which decides for itself).
 
@@ -90,13 +90,13 @@ slot[i] = base + i
 **Slot 0** (base slot) packs three fields into a single word:
 
 ```
-[ blockTimestamp (32 bits) | numSlots (8 bits) | slot0 value (216 bits) ]
+[ updateTimestamp (32 bits) | numSlots (8 bits) | slot0 value (216 bits) ]
   bits 255..224              bits 223..216        bits 215..0
 ```
 
 **Slots 1..k** store raw `uint256` values.
 
-`getState` checks that `blockTimestamp` in slot 0 matches `block.timestamp`; if not, the priority update is stale and the call reverts. The `numSlots` field records how many slots were written so `getState` returns exactly that many. Different lanes are fully independent — updating one lane does not affect others.
+`getState` returns the packed `updateTimestamp` alongside the slots without any freshness check — readers decide how to interpret it. The `numSlots` field records how many slots were written so `getState` returns exactly that many (and an empty array when no update has ever been written). Different lanes are fully independent — updating one lane does not affect others.
 
 ## Gas Costs
 

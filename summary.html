@@ -50,7 +50,7 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 <ul>
   <li><strong>Standardized:</strong> Builders learn one interface</li>
   <li><strong>Composable:</strong> Multiple updates from different protocols can be batched into a single transaction</li>
-  <li><strong>Block-scoped:</strong> Updates are only valid for the current block (enforced by block timestamp), automatically stale after</li>
+  <li><strong>Timestamped:</strong> Each update carries a writer-chosen timestamp, returned alongside the data so consumers can reject stale updates (typically anything not from the current block)</li>
   <li><strong>Predictable storage:</strong> Fixed layout means builders can apply updates directly to state without executing arbitrary code</li>
   <li><strong>No execution risk:</strong> The registry only writes to its own storage. No frontrunning, no complex execution</li>
 </ul>
@@ -63,9 +63,9 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 
 <p><strong>Updating state.</strong></p>
 
-<p><code>updateState(address target, uint256 laneIndex, uint256 blockTimestamp, uint256[] slots)</code></p>
+<p><code>updateState(address target, uint256 laneIndex, uint256 updateTimestamp, uint256[] slots)</code></p>
 
-<p>An authorized updater calls this to write fresh state for a target contract. The <code>blockTimestamp</code> must match the current block, ensuring the data is never stale.</p>
+<p>An authorized updater calls this to write fresh state for a target contract. The <code>updateTimestamp</code> is chosen by the writer and stored verbatim (truncated to 32 bits); the registry does not validate it. Consumers compare it against <code>block.timestamp</code> to decide whether the data is fresh.</p>
 
 <p><code>batchUpdateStateWithSignature(SignedUpdate[] updates)</code></p>
 
@@ -73,9 +73,9 @@ mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
 
 <p><strong>Reading state.</strong></p>
 
-<p><code>getState(uint256 laneIndex) returns (uint256[] memory)</code></p>
+<p><code>getState(uint256 laneIndex) returns (uint32 updateTimestamp, uint256[] memory slots)</code></p>
 
-<p>A target contract calls this on the registry (<code>msg.sender</code> and <code>laneIndex</code> determine which state is returned). Returns exactly the number of slots that were written. Reverts with <code>StateNotUpdated</code> if no update has been written in the current block for that lane, so consumers never read stale data.</p>
+<p>A target contract calls this on the registry (<code>msg.sender</code> and <code>laneIndex</code> determine which state is returned). Returns the stored <code>updateTimestamp</code> together with exactly the number of slots that were written. Never reverts: if no update has ever been written for the lane, the timestamp is <code>0</code> and the slot array is empty. Consumers compare the timestamp to <code>block.timestamp</code> to decide whether to act on the data.</p>
 
 <h2>How Updaters Submit Updates to the Builder</h2>
 
@@ -171,20 +171,20 @@ sequenceDiagram
 
 <table>
   <tr><th>Operation</th><th>Gas</th></tr>
-  <tr><td>Direct update</td><td>21000 + 9351 + k × 5212</td></tr>
-  <tr><td>Batched update (n updates)</td><td>21000 + 872 + n × (15806 + k × 5238)</td></tr>
-  <tr><td>Read (cold)</td><td>3236 + k × 2269</td></tr>
-  <tr><td>Read (warm)</td><td>1236 + k × 269</td></tr>
+  <tr><td>Direct update</td><td>21000 + 9393 + k × 5212</td></tr>
+  <tr><td>Batched update (n updates)</td><td>21000 + 872 + n × (16829 + k × 5237)</td></tr>
+  <tr><td>Read (cold)</td><td>3191 + k × 2269</td></tr>
+  <tr><td>Read (warm)</td><td>1191 + k × 269</td></tr>
 </table>
 
 <p>Batching vs individual transactions (k = 0):</p>
 
 <table>
   <tr><th>Updates</th><th>Individual (per update)</th><th>Batched (per update)</th><th>Savings</th></tr>
-  <tr><td>1</td><td>30,351</td><td>37,678</td><td>-24%</td></tr>
-  <tr><td>2</td><td>30,351</td><td>26,742</td><td>12%</td></tr>
-  <tr><td>5</td><td>30,351</td><td>20,180</td><td>34%</td></tr>
-  <tr><td>10</td><td>30,351</td><td>17,993</td><td>41%</td></tr>
+  <tr><td>1</td><td>30,393</td><td>38,701</td><td>-27%</td></tr>
+  <tr><td>2</td><td>30,393</td><td>27,765</td><td>9%</td></tr>
+  <tr><td>5</td><td>30,393</td><td>21,203</td><td>31%</td></tr>
+  <tr><td>10</td><td>30,393</td><td>19,016</td><td>38%</td></tr>
 </table>
 
 <p>Batching breaks even at ~2 updates and saves more as the number grows.</p>

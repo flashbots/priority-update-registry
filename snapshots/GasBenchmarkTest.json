@@ -1,17 +1,3 @@
 {
-  "read_cold_k=0": "3191",
-  "read_cold_k=10": "30249",
-  "read_cold_k=5": "16406",
-  "read_warm_k=0": "1191",
-  "read_warm_k=10": "7338",
-  "read_warm_k=5": "4447",
-  "update_batch_k=0,n=0": "21872",
-  "update_batch_k=0,n=10": "202049",
-  "update_batch_k=0,n=5": "113122",
-  "update_batch_n=5,k=10": "380385",
-  "update_batch_n=5,k=5": "246230",
-  "update_direct_k=0": "30393",
-  "update_direct_k=10": "91000",
-  "update_direct_k=5": "60571",
-  "verify": "1090214"
+  "verify": "1089948"
 }

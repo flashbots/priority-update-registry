@@ -51,7 +51,7 @@ contract PrioUpdateRegistryTest is Test {
             target: _target,
             signer: updater,
             laneIndex: _laneIndex,
-            blockTimestamp: ts,
+            updateTimestamp: ts,
             slots: slots,
             signature: _signUpdate(_target, _laneIndex, ts, slots)
         });
@@ -103,7 +103,8 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, block.timestamp);
         assertEq(got[0], 0x2);
     }
 
@@ -143,7 +144,8 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, block.timestamp);
         assertEq(got[0], slots[0]);
     }
 
@@ -158,7 +160,8 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, block.timestamp);
         assertEq(got.length, 3);
         assertEq(got[0], slots[0]);
         assertEq(got[1], slots[1]);
@@ -174,13 +177,28 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
     }
 
-    function test_updateState_reverts_wrong_timestamp() public {
+    function test_updateState_arbitrary_timestamp() public {
         _addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
+        slots[0] = 0xaa;
 
+        vm.warp(1000);
         vm.prank(updater);
-        vm.expectRevert(PrioUpdateRegistry.WrongTimestamp.selector);
-        registry.updateState(target, 0, block.timestamp + 1, slots);
+        registry.updateState(target, 0, 2000, slots);
+
+        vm.prank(target);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, 2000);
+        assertEq(got[0], 0xaa);
+
+        slots[0] = 0xbb;
+        vm.prank(updater);
+        registry.updateState(target, 0, 500, slots);
+
+        vm.prank(target);
+        (ts, got) = registry.getState(0);
+        assertEq(ts, 500);
+        assertEq(got[0], 0xbb);
     }
 
     function test_updateState_reverts_empty_slots() public {
@@ -202,23 +220,27 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots);
     }
 
-    function test_getState_reverts_stale() public {
+    function test_getState_returns_stale_timestamp() public {
         _addUpdater(target, updater);
         uint256[] memory slots = new uint256[](1);
+        slots[0] = 0xaa;
 
+        uint256 writtenAt = block.timestamp;
         vm.prank(updater);
-        registry.updateState(target, 0, block.timestamp, slots);
+        registry.updateState(target, 0, writtenAt, slots);
 
         vm.warp(block.timestamp + 12);
         vm.prank(target);
-        vm.expectRevert(PrioUpdateRegistry.StateNotUpdated.selector);
-        registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, writtenAt);
+        assertEq(got[0], 0xaa);
     }
 
-    function test_getState_reverts_never_updated() public {
+    function test_getState_never_updated() public {
         vm.prank(target);
-        vm.expectRevert(PrioUpdateRegistry.StateNotUpdated.selector);
-        registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, 0);
+        assertEq(got.length, 0);
     }
 
     function test_overwrite_state_same_block() public {
@@ -235,7 +257,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots2);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0);
+        (, uint256[] memory got) = registry.getState(0);
         assertEq(got[0], 0xbb);
     }
 
@@ -258,17 +280,21 @@ contract PrioUpdateRegistryTest is Test {
         uint256[] memory slots1 = new uint256[](1);
         slots1[0] = 0xbb;
 
+        uint256 t0 = block.timestamp;
+
         vm.prank(updater);
-        registry.updateState(target, 0, block.timestamp, slots0);
+        registry.updateState(target, 0, t0, slots0);
         vm.prank(updater);
-        registry.updateState(target, 1, block.timestamp, slots1);
+        registry.updateState(target, 1, t0, slots1);
 
         vm.prank(target);
-        uint256[] memory got0 = registry.getState(0);
+        (uint32 ts0, uint256[] memory got0) = registry.getState(0);
+        assertEq(ts0, t0);
         assertEq(got0[0], 0xaa);
 
         vm.prank(target);
-        uint256[] memory got1 = registry.getState(1);
+        (uint32 ts1, uint256[] memory got1) = registry.getState(1);
+        assertEq(ts1, t0);
         assertEq(got1[0], 0xbb);
 
         vm.warp(block.timestamp + 12);
@@ -277,11 +303,13 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, block.timestamp, slots0);
 
         vm.prank(target);
-        registry.getState(0);
+        (ts0, got0) = registry.getState(0);
+        assertEq(ts0, block.timestamp);
 
         vm.prank(target);
-        vm.expectRevert(PrioUpdateRegistry.StateNotUpdated.selector);
-        registry.getState(1);
+        (ts1, got1) = registry.getState(1);
+        assertEq(ts1, t0);
+        assertEq(got1[0], 0xbb);
     }
 
     function test_batchUpdateStateWithSignature_and_getState_single_slot() public {
@@ -295,7 +323,8 @@ contract PrioUpdateRegistryTest is Test {
         registry.batchUpdateStateWithSignature(updates);
 
         vm.prank(target);
-        uint256[] memory got = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, block.timestamp);
         assertEq(got[0], slots[0]);
     }
 
@@ -309,7 +338,7 @@ contract PrioUpdateRegistryTest is Test {
             target: target,
             signer: updater,
             laneIndex: 0,
-            blockTimestamp: block.timestamp,
+            updateTimestamp: block.timestamp,
             slots: slots,
             signature: hex"1234"
         });
@@ -342,7 +371,7 @@ contract PrioUpdateRegistryTest is Test {
             target: target,
             signer: wrongSigner,
             laneIndex: 0,
-            blockTimestamp: block.timestamp,
+            updateTimestamp: block.timestamp,
             slots: slots,
             signature: abi.encodePacked(r, s, v)
         });
@@ -377,7 +406,7 @@ contract PrioUpdateRegistryTest is Test {
             target: target,
             signer: updater,
             laneIndex: 0,
-            blockTimestamp: block.timestamp,
+            updateTimestamp: block.timestamp,
             slots: slots,
             signature: abi.encodePacked(r, s, v)
         });
@@ -398,7 +427,7 @@ contract PrioUpdateRegistryTest is Test {
             target: walletAddr,
             signer: walletAddr,
             laneIndex: 0,
-            blockTimestamp: block.timestamp,
+            updateTimestamp: block.timestamp,
             slots: slots,
             signature: _signUpdate(walletAddr, 0, block.timestamp, slots)
         });
@@ -406,7 +435,8 @@ contract PrioUpdateRegistryTest is Test {
         registry.batchUpdateStateWithSignature(updates);
 
         vm.prank(walletAddr);
-        uint256[] memory got = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        assertEq(ts, block.timestamp);
         assertEq(got[0], slots[0]);
     }
 
@@ -435,24 +465,12 @@ contract PrioUpdateRegistryTest is Test {
             target: walletAddr,
             signer: walletAddr,
             laneIndex: 0,
-            blockTimestamp: block.timestamp,
+            updateTimestamp: block.timestamp,
             slots: slots,
             signature: abi.encodePacked(r, s, v)
         });
 
         vm.expectRevert(PrioUpdateRegistry.NotAuthorized.selector);
-        registry.batchUpdateStateWithSignature(updates);
-    }
-
-    function test_batchUpdateStateWithSignature_reverts_wrong_timestamp() public {
-        _addUpdater(target, updater);
-        uint256[] memory slots = new uint256[](1);
-        slots[0] = 1;
-
-        PrioUpdateRegistry.SignedUpdate[] memory updates = new PrioUpdateRegistry.SignedUpdate[](1);
-        updates[0] = _makeSignedUpdate(target, 0, block.timestamp + 1, slots);
-
-        vm.expectRevert(PrioUpdateRegistry.WrongTimestamp.selector);
         registry.batchUpdateStateWithSignature(updates);
     }
 
