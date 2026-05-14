@@ -167,6 +167,10 @@ We suggest this approach to applying priority update in the builder.
 2. Prohibit priority updates from landing in the block except if the builder explicitly inserts them.
 3. After a user transaction is executed, a priority update transaction should be inserted in front of the user transaction.
 
+## Example Integration
+
+[`src/ExamplePropAmm.sol`](src/ExamplePropAmm.sol) is a minimal proprietary AMM that reads its per-pair pricing parameters (`concentration`, `multX`, `multY`) from this registry. The market maker publishes a priority update each block; swappers read the latest parameters via `getState`, and the AMM enforces freshness against a configurable `maxParameterAge`. Adapted from [fahimahmedx/prop-amm](https://github.com/fahimahmedx/prop-amm), which uses a different top-of-block storage mechanism.
+
 ## Testing
 
 ```shell
