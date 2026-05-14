@@ -1,35 +1,46 @@
-#name: CI
-#
-#permissions: {}
-#
-#on:
-#  push:
-#  pull_request:
-#  workflow_dispatch:
-#
-#jobs:
-#  check:
-#    name: Foundry project
-#    runs-on: ubuntu-latest
-#    permissions:
-#      contents: read
-#    steps:
-#      - uses: actions/checkout@v6
-#        with:
-#          persist-credentials: false
-#          submodules: recursive
-#
-#      - name: Install Foundry
-#        uses: foundry-rs/foundry-toolchain@v1
-#
-#      - name: Show Forge version
-#        run: forge --version
-#
-#      - name: Run Forge fmt
-#        run: forge fmt --check
-#
-#      - name: Run Forge build
-#        run: forge build --sizes
-#
-#      - name: Run Forge tests
-#        run: forge test -vvv
+name: CI
+
+permissions: {}
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Foundry project
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+
+      - name: Show Forge version
+        run: forge --version
+
+      - name: Run Forge fmt
+        run: forge fmt --check
+
+      - name: Run Forge build
+        run: forge build --sizes
+
+      - name: Run Forge tests
+        run: forge test -vvv
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Slither
+        run: pip install slither-analyzer==0.11.5
+
+      - name: Run Slither
+        run: slither . --filter-paths lib/

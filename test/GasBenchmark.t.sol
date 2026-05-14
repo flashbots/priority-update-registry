@@ -14,6 +14,7 @@ contract GasBenchmarkTest is Test {
     uint256 constant MAX_N = 11;
 
     function _target(uint256 i) internal pure returns (address) {
+        // forge-lint: disable-next-line(unsafe-typecast)
         return address(uint160(0x1000 + i));
     }
 
@@ -22,9 +23,8 @@ contract GasBenchmarkTest is Test {
         view
         returns (bytes memory)
     {
-        bytes32 structHash = keccak256(
-            abi.encode(registry.UPDATE_TYPEHASH(), t, laneIndex, ts, keccak256(abi.encodePacked(slots)))
-        );
+        bytes32 structHash =
+            keccak256(abi.encode(registry.UPDATE_TYPEHASH(), t, laneIndex, ts, keccak256(abi.encodePacked(slots))));
         bytes32 digest = keccak256(abi.encodePacked("\x19\x01", registry.DOMAIN_SEPARATOR(), structHash));
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(updaterKey, digest);
         return abi.encodePacked(r, s, v);
@@ -41,7 +41,7 @@ contract GasBenchmarkTest is Test {
 
     function setUp() public {
         updater = vm.addr(updaterKey);
-        registry = new PrioUpdateRegistry();
+        registry = new PrioUpdateRegistry(1 hours, 1 hours);
 
         uint256[] memory slots = _makeUpdateSlots(0xdead, MAX_K);
 
@@ -61,21 +61,21 @@ contract GasBenchmarkTest is Test {
 
     function estimateUpdateGas(uint256 k) internal pure returns (uint256) {
         /// 21000 + A0 + k * A1
-        return 21000 + 9434 + k * 5212;
+        return 21000 + 9712 + k * 5212;
     }
 
     function estimateBatchSigGas(uint256 n, uint256 k) internal pure returns (uint256) {
         /// 21000 + B0 + n*(B1 + k * B2)
-        return 21000 + 894 + n * (17110 + k * 5235);
+        return 21000 + 916 + n * (17366 + k * 5235);
     }
 
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {
         if (warm) {
             /// C0 + C1*k
-            return 1287 + 269 * k;
+            return 1311 + 269 * k;
         } else {
             /// D0 + D1*k
-            return 3287 + 2269 * k;
+            return 3311 + 2269 * k;
         }
     }
 
@@ -135,6 +135,7 @@ contract GasBenchmarkTest is Test {
         updates = new PrioUpdateRegistry.SignedUpdate[](n);
         for (uint256 i = 0; i < n; i++) {
             address t = _target(i);
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint256[] memory slots = _makeUpdateSlots(0xcc + uint32(i), k);
             bytes memory sig = _signUpdate(t, 0, uint32(block.timestamp), slots);
             updates[i] = PrioUpdateRegistry.SignedUpdate(t, updater, 0, uint32(block.timestamp), slots, sig);
@@ -219,6 +220,7 @@ contract GasBenchmarkTest is Test {
     }
 
     function _writeWithKSlots(address t, uint256 k) internal {
+        // forge-lint: disable-next-line(unsafe-typecast)
         uint256[] memory slots = _makeUpdateSlots(uint32(k), k);
         vm.prank(updater);
         registry.updateState(t, 0, uint32(block.timestamp), slots);
@@ -321,6 +323,7 @@ contract GasBenchmarkTest is Test {
 
         for (uint256 k = 0; k <= MAX_K; k++) {
             uint256 snap = vm.snapshot();
+            // forge-lint: disable-next-line(unsafe-typecast)
             uint256[] memory slots = _makeUpdateSlots(uint32(k), k);
 
             vm.cool(address(r));
@@ -401,6 +404,7 @@ contract GasBenchmarkTest is Test {
             uint256 n = ns[i];
             uint256 direct = n * estimateUpdateGas(0);
             uint256 batched = estimateBatchSigGas(n, 0);
+            // forge-lint: disable-next-line(unsafe-typecast)
             int256 savings = 100 - int256(batched * 100 / direct);
             console.log("n=%d | direct=%d | batched=%d", n, direct, batched);
             console.log("  savings=%d%%", savings);
