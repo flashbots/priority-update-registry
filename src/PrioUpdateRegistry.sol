@@ -19,7 +19,9 @@ contract PrioUpdateRegistry is EIP712 {
     /// @notice Thrown when `updateTimestamp` lies outside
     /// `[block.timestamp - MAX_UPDATE_AGE, block.timestamp + MAX_UPDATE_LEAD_TIME]`.
     error InvalidUpdateTimestamp();
-    /// @notice Thrown when `updateTimestamp` is older than the timestamp currently stored for the lane.
+    /// @notice Thrown on writes when `updateTimestamp` is older than the timestamp currently
+    /// stored for the lane, or on reads when the stored timestamp lies outside the
+    /// `[minTimestamp, maxTimestamp]` window the caller supplied to `getState`.
     error StaleUpdate();
 
     event UpdaterAdded(address indexed target, address indexed updater);
@@ -69,17 +71,24 @@ contract PrioUpdateRegistry is EIP712 {
      * State
      */
 
-    /// @notice Returns the stored state for `msg.sender` at the given `laneIndex`.
-    /// @dev Callers decide how to interpret freshness based on `updateTimestamp`. The number
-    /// of slots returned matches the number that were written; an empty array means no
-    /// update has ever been written for this lane.
+    /// @notice Returns the stored state for `msg.sender` at the given `laneIndex`, enforcing
+    /// that the stored `updateTimestamp` lies within `[minTimestamp, maxTimestamp]` (inclusive).
+    /// @dev Reverts with `StaleUpdate` if the stored timestamp falls outside the supplied window.
+    /// A lane that has never been written has a stored timestamp of `0`
+    /// The number of slots returned matches the number that were written.
     /// @param laneIndex The lane to read state for, scoped to `msg.sender`.
+    /// @param minTimestamp Minimum acceptable stored `updateTimestamp` (inclusive).
+    /// @param maxTimestamp Maximum acceptable stored `updateTimestamp` (inclusive).
     /// @return updateTimestamp The timestamp the lane was last written for.
     /// @return slots The stored slot values for the lane.
     // Assembly is used to read the packed slot-0 layout (updateTimestamp | numSlots | slots[0])
     // and to bulk-load subsequent slots without per-iteration bounds checks.
     // slither-disable-next-line assembly
-    function getState(uint256 laneIndex) external view returns (uint32 updateTimestamp, uint256[] memory slots) {
+    function getState(uint256 laneIndex, uint32 minTimestamp, uint32 maxTimestamp)
+        external
+        view
+        returns (uint32 updateTimestamp, uint256[] memory slots)
+    {
         uint256 base = _laneSlot0Index(msg.sender, laneIndex);
         uint256 first;
         assembly {
@@ -87,6 +96,7 @@ contract PrioUpdateRegistry is EIP712 {
         }
         // forge-lint: disable-next-line(unsafe-typecast)
         updateTimestamp = uint32(first >> 224);
+        if (updateTimestamp < minTimestamp || updateTimestamp > maxTimestamp) revert StaleUpdate();
         // forge-lint: disable-next-line(unsafe-typecast)
         uint256 numSlots = uint8(first >> 216);
         slots = new uint256[](numSlots);

@@ -1,10 +1,10 @@
 {
-  "read_cold_k=0": "3311",
-  "read_cold_k=10": "30439",
-  "read_cold_k=5": "16597",
-  "read_warm_k=0": "1311",
-  "read_warm_k=10": "7529",
-  "read_warm_k=5": "4638",
+  "read_cold_k=0": "3524",
+  "read_cold_k=10": "30685",
+  "read_cold_k=5": "16843",
+  "read_warm_k=0": "1524",
+  "read_warm_k=10": "7775",
+  "read_warm_k=5": "4884",
   "update_batch_k=0,n=0": "21916",
   "update_batch_k=0,n=10": "207497",
   "update_batch_k=0,n=5": "115856",
@@ -13,5 +13,5 @@
   "update_direct_k=0": "30690",
   "update_direct_k=10": "91303",
   "update_direct_k=5": "60874",
-  "verify": "1096568"
+  "verify": "1096810"
 }

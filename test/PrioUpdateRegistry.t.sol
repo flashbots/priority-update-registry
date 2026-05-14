@@ -107,7 +107,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(block.timestamp), slots);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, uint32(block.timestamp));
         assertEq(got[0], 0x2);
     }
@@ -148,7 +148,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(block.timestamp), slots);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, uint32(block.timestamp));
         assertEq(got[0], slots[0]);
     }
@@ -164,7 +164,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(block.timestamp), slots);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, uint32(block.timestamp));
         assertEq(got.length, 3);
         assertEq(got[0], slots[0]);
@@ -191,7 +191,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(500), slots);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, 500);
         assertEq(got[0], 0xaa);
 
@@ -200,7 +200,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(2000), slots);
 
         vm.prank(target);
-        (ts, got) = registry.getState(0);
+        (ts, got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, 2000);
         assertEq(got[0], 0xbb);
     }
@@ -220,7 +220,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, newer - 1, slots);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, newer);
         assertEq(got[0], 0xaa);
     }
@@ -239,7 +239,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, ts0, slots);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, ts0);
         assertEq(got[0], 0xbb);
     }
@@ -258,7 +258,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 1, newer - 1, slots);
 
         vm.prank(target);
-        (uint32 ts1, uint256[] memory got1) = registry.getState(1);
+        (uint32 ts1, uint256[] memory got1) = registry.getState(1, 0, type(uint32).max);
         assertEq(ts1, newer - 1);
         assertEq(got1[0], 0xbb);
     }
@@ -383,16 +383,64 @@ contract PrioUpdateRegistryTest is Test {
 
         vm.warp(block.timestamp + 12);
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, writtenAt);
         assertEq(got[0], 0xaa);
     }
 
     function test_getState_never_updated() public {
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, 0);
         assertEq(got.length, 0);
+    }
+
+    function test_getState_reverts_when_stored_below_min() public {
+        _addUpdater(target, updater);
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 0xaa;
+
+        uint32 writtenAt = uint32(block.timestamp);
+        vm.prank(updater);
+        registry.updateState(target, 0, writtenAt, slots);
+
+        vm.prank(target);
+        vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
+        registry.getState(0, writtenAt + 1, type(uint32).max);
+    }
+
+    function test_getState_reverts_when_stored_above_max() public {
+        _addUpdater(target, updater);
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 0xaa;
+
+        uint32 writtenAt = uint32(block.timestamp);
+        vm.prank(updater);
+        registry.updateState(target, 0, writtenAt, slots);
+
+        vm.prank(target);
+        vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
+        registry.getState(0, 0, writtenAt - 1);
+    }
+
+    function test_getState_accepts_boundary_min_and_max() public {
+        _addUpdater(target, updater);
+        uint256[] memory slots = new uint256[](1);
+        slots[0] = 0xaa;
+
+        uint32 writtenAt = uint32(block.timestamp);
+        vm.prank(updater);
+        registry.updateState(target, 0, writtenAt, slots);
+
+        vm.prank(target);
+        (uint32 tsLo,) = registry.getState(0, writtenAt, writtenAt);
+        assertEq(tsLo, writtenAt);
+    }
+
+    function test_getState_never_updated_reverts_when_min_above_zero() public {
+        vm.prank(target);
+        vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
+        registry.getState(0, 1, type(uint32).max);
     }
 
     function test_overwrite_state_same_block() public {
@@ -409,7 +457,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(block.timestamp), slots2);
 
         vm.prank(target);
-        (, uint256[] memory got) = registry.getState(0);
+        (, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(got[0], 0xbb);
     }
 
@@ -440,12 +488,12 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 1, t0, slots1);
 
         vm.prank(target);
-        (uint32 ts0, uint256[] memory got0) = registry.getState(0);
+        (uint32 ts0, uint256[] memory got0) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts0, t0);
         assertEq(got0[0], 0xaa);
 
         vm.prank(target);
-        (uint32 ts1, uint256[] memory got1) = registry.getState(1);
+        (uint32 ts1, uint256[] memory got1) = registry.getState(1, 0, type(uint32).max);
         assertEq(ts1, t0);
         assertEq(got1[0], 0xbb);
 
@@ -455,11 +503,11 @@ contract PrioUpdateRegistryTest is Test {
         registry.updateState(target, 0, uint32(block.timestamp), slots0);
 
         vm.prank(target);
-        (ts0, got0) = registry.getState(0);
+        (ts0, got0) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts0, uint32(block.timestamp));
 
         vm.prank(target);
-        (ts1, got1) = registry.getState(1);
+        (ts1, got1) = registry.getState(1, 0, type(uint32).max);
         assertEq(ts1, t0);
         assertEq(got1[0], 0xbb);
     }
@@ -475,7 +523,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.batchUpdateStateWithSignature(updates);
 
         vm.prank(target);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, uint32(block.timestamp));
         assertEq(got[0], slots[0]);
     }
@@ -579,7 +627,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.batchUpdateStateWithSignature(updates);
 
         vm.prank(walletAddr);
-        (uint32 ts, uint256[] memory got) = registry.getState(0);
+        (uint32 ts, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(ts, uint32(block.timestamp));
         assertEq(got[0], slots[0]);
     }
@@ -655,7 +703,7 @@ contract PrioUpdateRegistryTest is Test {
         registry.batchUpdateStateWithSignature(updates);
 
         vm.prank(target);
-        (uint32 storedTs, uint256[] memory got) = registry.getState(0);
+        (uint32 storedTs, uint256[] memory got) = registry.getState(0, 0, type(uint32).max);
         assertEq(storedTs, ts);
         assertEq(got[0], slots[0]);
 
@@ -684,7 +732,7 @@ contract PrioUpdateRegistryTest is Test {
 
     function _assertLaneEmpty(address _target, uint256 _laneIndex) internal {
         vm.prank(_target);
-        (uint32 ts, uint256[] memory got) = registry.getState(_laneIndex);
+        (uint32 ts, uint256[] memory got) = registry.getState(_laneIndex, 0, type(uint32).max);
         assertEq(ts, 0);
         assertEq(got.length, 0);
     }
@@ -832,7 +880,7 @@ contract PrioUpdateRegistryTest is Test {
         _assertLaneEmpty(target, 0);
         // Lane 1's pre-existing state is unchanged.
         vm.prank(target);
-        (uint32 ts1, uint256[] memory got1) = registry.getState(1);
+        (uint32 ts1, uint256[] memory got1) = registry.getState(1, 0, type(uint32).max);
         assertEq(ts1, newer);
         assertEq(got1[0], preSlots[0]);
     }

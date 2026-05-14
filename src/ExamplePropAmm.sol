@@ -14,6 +14,11 @@ import {PrioUpdateRegistry} from "./PrioUpdateRegistry.sol";
  * @dev Reads pricing parameters from a PrioUpdateRegistry that publishes top-of-block updates.
  * Adapted from https://github.com/fahimahmedx/prop-amm.
  */
+// Slither's `timestamp` detector taints any comparison whose data path touches `block.timestamp`.
+// Because `_readParametersFromRegistry` forwards `block.timestamp` as a freshness bound, every
+// downstream amount/reserve comparison gets reported. These comparisons are not timestamp-based;
+// disable the detector for this example contract.
+// slither-disable-start timestamp
 contract ExamplePropAmm is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
@@ -82,7 +87,6 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
     error SlippageExceeded();
     error InvalidDecimalConfiguration();
     error ParametersNotSet();
-    error StaleParameters();
 
     // ============ Modifiers ============
 
@@ -382,13 +386,18 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
     // ============ Internal Functions ============
 
     /**
-     * @notice Read parameters from the registry and validate freshness
+     * @notice Read parameters from the registry, requiring the stored timestamp to be no
+     * older than `maxParameterAge` seconds and no newer than the current block.
+     * @dev The registry reverts with `PrioUpdateRegistry.StaleUpdate` if the bounds are violated.
      */
     function _readParametersFromRegistry(bytes32 pairId) internal view returns (PairParameters memory params) {
-        (uint32 ts, uint256[] memory slots) = prioRegistry.getState(uint256(pairId));
-        if (ts == 0 || slots.length < 3) revert ParametersNotSet();
-        // slither-disable-next-line timestamp
-        if (block.timestamp > uint256(ts) + maxParameterAge) revert StaleParameters();
+        // The discarded first return is the stored timestamp; the registry already enforced it
+        // is within `[now - maxParameterAge, now]`, so the AMM has no further use for it.
+        // forge-lint: disable-next-line(unsafe-typecast)
+        // slither-disable-next-line unused-return
+        (, uint256[] memory slots) =
+            prioRegistry.getState(uint256(pairId), uint32(block.timestamp - maxParameterAge), uint32(block.timestamp));
+        if (slots.length < 3) revert ParametersNotSet();
         params.concentration = slots[0];
         params.multX = slots[1];
         params.multY = slots[2];
@@ -496,6 +505,7 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
         prioRegistry.addUpdater(newMarketMaker);
     }
 }
+// slither-disable-end timestamp
 
 // ============ Interfaces ============
 

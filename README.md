@@ -30,7 +30,7 @@ With fixed priority update structure we get these benefits:
 - Each target manages its own set of authorized updaters; registered updaters must be EOAs (ECDSA signing). A target can additionally authorize itself by signing via [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271), without prior registration (see [Signed Updates and ERC-1271](#signed-updates-and-erc-1271)).
 - A priority update consists of a 27-byte (216-bit) base value plus k additional 32-byte slots. Each additional slot increases the gas cost of an update. The number of slots is stored on-chain (max 255).
 - Each target can have multiple independent **lanes** (identified by `laneIndex`). Updates to different lanes are independent — they land separately and carry their own timestamp.
-- Each update carries an `updateTimestamp` chosen by the writer, stored alongside the data and returned to readers so they can decide whether to act on it.
+- Each update carries an `updateTimestamp` chosen by the writer. Readers supply a `[minTimestamp, maxTimestamp]` window and `getState` reverts if the stored value is outside it.
 - Priority updates can only be read by the target contract itself (via `msg.sender`).
 
 ### Writing Priority Updates
@@ -50,7 +50,7 @@ The `updateTimestamp` is a `uint32` chosen by the writer and subject to two chec
 
 ### Reading Priority Updates
 
-- **`getState(uint256 laneIndex) → (uint32 updateTimestamp, uint256[] slots)`** — called by `target` itself (`msg.sender` is the target). Never reverts. Returns the stored `updateTimestamp` (`0` if no update was ever written) together with exactly the number of slots that were written (empty array if no update was ever written). Callers decide how to interpret freshness from `updateTimestamp`.
+- **`getState(uint256 laneIndex, uint32 minTimestamp, uint32 maxTimestamp) → (uint32 updateTimestamp, uint256[] slots)`** — called by `target` itself. Reverts `StaleUpdate` if the stored timestamp is outside `[minTimestamp, maxTimestamp]` (inclusive).
 - `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write state for `target`.
 
 ### Updater Management
@@ -103,7 +103,7 @@ slot[i] = base + i
 
 **Slots 1..k** store raw `uint256` values.
 
-`getState` returns the packed `updateTimestamp` alongside the slots without any freshness check — readers decide how to interpret it. The `numSlots` field records how many slots were written so `getState` returns exactly that many (and an empty array when no update has ever been written). Different lanes are fully independent — updating one lane does not affect others.
+`getState` reverts `StaleUpdate` if the unpacked `updateTimestamp` is outside the caller's window. The `numSlots` field records how many slots were written so `getState` returns exactly that many (and an empty array when no update has ever been written). Different lanes are fully independent — updating one lane does not affect others.
 
 ### Collision resistance
 
@@ -120,9 +120,9 @@ A collision requires finding a keccak output within 255 of a chosen slot — `�
 
 The block builder receives a continuous stream of priority updates for the upcoming block and may insert any one of them. The contract trusts the builder to insert the most recent update it received. Builder bugs or propagation issues can cause a stale (but still within the validity window) update to land instead of the freshest one. The registry cannot distinguish "stale but valid" from "freshest" on-chain.
 
-### Target contracts must validate `updateTimestamp`
+### Target contracts choose their freshness window
 
-`getState` returns `updateTimestamp` alongside the slots without any freshness check. Target contracts MUST inspect `updateTimestamp` themselves — e.g. require `updateTimestamp == block.timestamp` for strict same-block freshness, or enforce a maximum age tied to their own logic. The registry's `MAX_UPDATE_AGE` / `MAX_UPDATE_LEAD_TIME` bounds only constrain what writers can put on-chain; they are not a substitute for per-target freshness checks.
+Targets pick `[minTimestamp, maxTimestamp]` on each `getState` call and the registry enforces it. The write-side `MAX_UPDATE_AGE` / `MAX_UPDATE_LEAD_TIME` bounds are not a substitute.
 
 ### Signed updates are replayable within their window
 
@@ -136,8 +136,8 @@ Gas costs are measured via `test/GasBenchmark.t.sol`.
 |---|---|
 | Direct `updateState` | `21000 + 9712 + k × 5212` |
 | Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 916 + n × (17366 + k × 5235)` |
-| `getState` (warm) | `1311 + k × 269` |
-| `getState` (cold) | `3311 + k × 2269` |
+| `getState` (warm) | `1524 + k × 269` |
+| `getState` (cold) | `3524 + k × 2269` |
 
 Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch. The batched formula is calibrated for ECDSA-signed updates; the ERC-1271 path adds a `staticcall` whose cost depends on the target's `isValidSignature` implementation.
 
@@ -169,7 +169,7 @@ We suggest this approach to applying priority update in the builder.
 
 ## Example Integration
 
-[`src/ExamplePropAmm.sol`](src/ExamplePropAmm.sol) is a minimal proprietary AMM that reads its per-pair pricing parameters (`concentration`, `multX`, `multY`) from this registry. The market maker publishes a priority update each block; swappers read the latest parameters via `getState`, and the AMM enforces freshness against a configurable `maxParameterAge`. Adapted from [fahimahmedx/prop-amm](https://github.com/fahimahmedx/prop-amm), which uses a different top-of-block storage mechanism.
+[`src/ExamplePropAmm.sol`](src/ExamplePropAmm.sol) is a minimal proprietary AMM that reads its per-pair pricing parameters (`concentration`, `multX`, `multY`) from this registry. The market maker publishes a priority update each block. Swappers read the latest parameters via `getState`, with the registry enforcing a `maxParameterAge` freshness window. Adapted from [fahimahmedx/prop-amm](https://github.com/fahimahmedx/prop-amm), which uses a different top-of-block storage mechanism.
 
 ## Testing
 

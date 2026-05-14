@@ -58,7 +58,7 @@ contract PrioUpdateRegistryFuzzTest is Test {
         registry.updateState(target, laneIndex, ts, slots);
 
         vm.prank(target);
-        (uint32 gotTs, uint256[] memory got) = registry.getState(laneIndex);
+        (uint32 gotTs, uint256[] memory got) = registry.getState(laneIndex, 0, type(uint32).max);
 
         assertEq(gotTs, ts);
         _assertSlotsEq(got, slots);
@@ -108,9 +108,9 @@ contract PrioUpdateRegistryFuzzTest is Test {
         registry.updateState(c.target, c.laneB, c.tsB, c.slotsB);
 
         vm.prank(c.target);
-        (uint32 gotTsA, uint256[] memory gotA) = registry.getState(c.laneA);
+        (uint32 gotTsA, uint256[] memory gotA) = registry.getState(c.laneA, 0, type(uint32).max);
         vm.prank(c.target);
-        (uint32 gotTsB, uint256[] memory gotB) = registry.getState(c.laneB);
+        (uint32 gotTsB, uint256[] memory gotB) = registry.getState(c.laneB, 0, type(uint32).max);
 
         assertEq(gotTsA, c.tsA);
         assertEq(gotTsB, c.tsB);
@@ -132,7 +132,7 @@ contract PrioUpdateRegistryFuzzTest is Test {
         registry.updateState(target, laneA, ts, slotsA);
 
         vm.prank(target);
-        (uint32 gotTs, uint256[] memory gotB) = registry.getState(laneB);
+        (uint32 gotTs, uint256[] memory gotB) = registry.getState(laneB, 0, type(uint32).max);
         assertEq(gotTs, 0);
         assertEq(gotB.length, 0);
     }
@@ -182,9 +182,9 @@ contract PrioUpdateRegistryFuzzTest is Test {
         registry.updateState(c.targetB, c.laneIndex, c.tsB, c.slotsB);
 
         vm.prank(c.targetA);
-        (uint32 gotTsA, uint256[] memory gotA) = registry.getState(c.laneIndex);
+        (uint32 gotTsA, uint256[] memory gotA) = registry.getState(c.laneIndex, 0, type(uint32).max);
         vm.prank(c.targetB);
-        (uint32 gotTsB, uint256[] memory gotB) = registry.getState(c.laneIndex);
+        (uint32 gotTsB, uint256[] memory gotB) = registry.getState(c.laneIndex, 0, type(uint32).max);
 
         assertEq(gotTsA, c.tsA);
         assertEq(gotTsB, c.tsB);
@@ -209,7 +209,7 @@ contract PrioUpdateRegistryFuzzTest is Test {
         registry.updateState(targetA, laneIndex, ts, slotsA);
 
         vm.prank(targetB);
-        (uint32 gotTs, uint256[] memory gotB) = registry.getState(laneIndex);
+        (uint32 gotTs, uint256[] memory gotB) = registry.getState(laneIndex, 0, type(uint32).max);
         assertEq(gotTs, 0);
         assertEq(gotB.length, 0);
     }
@@ -255,6 +255,57 @@ contract PrioUpdateRegistryFuzzTest is Test {
 
         assertTrue(registry.isUpdater(target, updater));
         assertEq(registry.isUpdater(target, otherUpdater), otherBefore);
+    }
+
+    /// Property: getState(lane, min, max) reverts iff the stored timestamp is outside
+    /// `[min, max]`; otherwise it returns the stored timestamp and slots unchanged.
+    function testFuzz_getState_bounds(
+        address target,
+        uint256 laneIndex,
+        uint32 fuzzStoredTs,
+        uint8 numSlots,
+        bytes32 seed,
+        uint32 minTimestamp,
+        uint32 maxTimestamp
+    ) public {
+        numSlots = uint8(bound(uint256(numSlots), 1, 255));
+        uint32 storedTs = _boundTs(fuzzStoredTs);
+        uint256[] memory slots = _buildSlots(numSlots, seed);
+
+        _addUpdater(target, updater);
+        vm.prank(updater);
+        registry.updateState(target, laneIndex, storedTs, slots);
+
+        bool inRange = storedTs >= minTimestamp && storedTs <= maxTimestamp;
+        vm.prank(target);
+        if (inRange) {
+            (uint32 gotTs, uint256[] memory got) = registry.getState(laneIndex, minTimestamp, maxTimestamp);
+            assertEq(gotTs, storedTs);
+            _assertSlotsEq(got, slots);
+        } else {
+            vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
+            registry.getState(laneIndex, minTimestamp, maxTimestamp);
+        }
+    }
+
+    /// Property: For a never-updated lane (stored timestamp 0), getState reverts unless
+    /// `minTimestamp == 0`; when it does not revert, it returns (0, []).
+    function testFuzz_getState_bounds_never_updated(
+        address target,
+        uint256 laneIndex,
+        uint32 minTimestamp,
+        uint32 maxTimestamp
+    ) public {
+        bool inRange = minTimestamp == 0;
+        vm.prank(target);
+        if (inRange) {
+            (uint32 gotTs, uint256[] memory got) = registry.getState(laneIndex, minTimestamp, maxTimestamp);
+            assertEq(gotTs, 0);
+            assertEq(got.length, 0);
+        } else {
+            vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
+            registry.getState(laneIndex, minTimestamp, maxTimestamp);
+        }
     }
 
     /// Property: addUpdater for one (target, u) pair never authorizes a different pair.

@@ -243,7 +243,7 @@ contract ExamplePropAmmTest is Test {
 
         vm.startPrank(trader);
         weth.approve(address(amm), 1 ether);
-        vm.expectRevert(ExamplePropAmm.StaleParameters.selector);
+        vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
         amm.swapXtoY(wethUsdcPairId, 1 ether, 0);
         vm.stopPrank();
     }

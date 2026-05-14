@@ -72,10 +72,10 @@ contract GasBenchmarkTest is Test {
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {
         if (warm) {
             /// C0 + C1*k
-            return 1311 + 269 * k;
+            return 1524 + 269 * k;
         } else {
             /// D0 + D1*k
-            return 3311 + 2269 * k;
+            return 3524 + 2269 * k;
         }
     }
 
@@ -230,11 +230,11 @@ contract GasBenchmarkTest is Test {
         _writeWithKSlots(target, 0);
 
         vm.prank(target);
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
 
         vm.prank(target);
         vm.startSnapshotGas("read_warm_k=0");
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         uint256 used = vm.snapshotGasLastCall("read_warm_k=0");
 
         console.log("C0 = %d", used);
@@ -251,19 +251,19 @@ contract GasBenchmarkTest is Test {
         _writeWithKSlots(t1, k1);
 
         vm.prank(t0);
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         vm.prank(t1);
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
 
         vm.prank(t0);
         vm.startSnapshotGas("read_warm_k=5");
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         uint256 gas0 = vm.snapshotGasLastCall("read_warm_k=5");
         vm.stopSnapshotGas("read_warm_k=5");
 
         vm.prank(t1);
         vm.startSnapshotGas("read_warm_k=10");
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         uint256 gas1 = vm.snapshotGasLastCall("read_warm_k=10");
         vm.stopSnapshotGas("read_warm_k=10");
 
@@ -278,7 +278,7 @@ contract GasBenchmarkTest is Test {
 
         vm.prank(target);
         vm.startSnapshotGas("read_cold_k=0");
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         uint256 used = vm.snapshotGasLastCall("read_cold_k=0");
 
         console.log("D0 = %d", used);
@@ -299,7 +299,7 @@ contract GasBenchmarkTest is Test {
 
         vm.prank(t0);
         vm.startSnapshotGas("read_cold_k=5");
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         uint256 gas0 = vm.snapshotGasLastCall("read_cold_k=5");
         vm.stopSnapshotGas("read_cold_k=5");
         vm.revertTo(snap);
@@ -308,7 +308,7 @@ contract GasBenchmarkTest is Test {
 
         vm.prank(t1);
         vm.startSnapshotGas("read_cold_k=10");
-        registry.getState(0);
+        registry.getState(0, 0, type(uint32).max);
         uint256 gas1 = vm.snapshotGasLastCall("read_cold_k=10");
         vm.stopSnapshotGas("read_cold_k=10");
 
@@ -366,14 +366,14 @@ contract GasBenchmarkTest is Test {
             address t = _target(k);
             _writeWithKSlots(t, k);
             vm.prank(t);
-            registry.getState(0);
+            registry.getState(0, 0, type(uint32).max);
         }
 
         for (uint256 k = 0; k <= MAX_K; k++) {
             address t = _target(k);
             vm.prank(t);
             vm.startSnapshotGas("verify");
-            registry.getState(0);
+            registry.getState(0, 0, type(uint32).max);
             uint256 actual = vm.snapshotGasLastCall("verify");
             vm.stopSnapshotGas("verify");
 
@@ -387,7 +387,7 @@ contract GasBenchmarkTest is Test {
 
             vm.prank(t);
             vm.startSnapshotGas("verify");
-            registry.getState(0);
+            registry.getState(0, 0, type(uint32).max);
             uint256 actual = vm.snapshotGasLastCall("verify");
             vm.stopSnapshotGas("verify");
 
