@@ -34,4 +34,10 @@ initcode-hash AGE LEAD:
 deploy SALT AGE LEAD *ARGS:
     forge script script/Deploy.s.sol \
       --sig "run(bytes32,uint256,uint256)" {{SALT}} {{AGE}} {{LEAD}} \
-      --broadcast {{ARGS}}
+      --broadcast {{ARGS}} --private-key $PRIVATE_KEY
+
+verify ADDRESS AGE LEAD *ARGS:
+    forge verify-contract {{ADDRESS}} src/PrioUpdateRegistry.sol:PrioUpdateRegistry \
+      --constructor-args $(cast abi-encode "constructor(uint256,uint256)" {{AGE}} {{LEAD}}) \
+      --etherscan-api-key $ETHERSCAN_API_KEY \
+      --watch {{ARGS}}

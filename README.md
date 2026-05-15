@@ -176,3 +176,12 @@ We suggest this approach to applying priority update in the builder.
 ```shell
 just test
 ```
+
+## Deployments
+
+### Ethereum mainnet
+
+- Address: `0xda7afeed01fe625cf15d187a19f94b45f00b8c5f`
+- Constructor: `MAX_UPDATE_AGE = 0`, `MAX_UPDATE_LEAD_TIME = 0`
+- CREATE2 factory: `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7`
+- Salt: `0x0000000000000000000000000000000000000000000000000000012809051083`
