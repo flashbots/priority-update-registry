@@ -6,16 +6,16 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
-import {PrioUpdateRegistry} from "./PrioUpdateRegistry.sol";
+import {PrioUpdateRegistryV2} from "./PrioUpdateRegistryV2.sol";
 
 /**
  * @title ExamplePropAmm
  * @notice A Proprietary Automated Market Maker where only the market maker can provide liquidity
- * @dev Reads pricing parameters from a PrioUpdateRegistry that publishes top-of-block updates.
+ * @dev Reads pricing parameters from a PrioUpdateRegistryV2 that publishes top-of-block updates.
  * Adapted from https://github.com/fahimahmedx/prop-amm.
  */
 // Slither's `timestamp` detector taints any comparison whose data path touches `block.timestamp`.
-// Because `_readParametersFromRegistry` forwards `block.timestamp` as a freshness bound, every
+// Because `_readParametersFromRegistry` compares stored data against `block.timestamp`, every
 // downstream amount/reserve comparison gets reported. These comparisons are not timestamp-based;
 // disable the detector for this example contract.
 // slither-disable-start timestamp
@@ -46,7 +46,7 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
     // ============ State Variables ============
 
     address public marketMaker;
-    PrioUpdateRegistry public immutable prioRegistry;
+    PrioUpdateRegistryV2 public immutable prioRegistry;
     uint256 public immutable maxParameterAge;
 
     mapping(bytes32 => TradingPair) public pairs;
@@ -87,6 +87,7 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
     error SlippageExceeded();
     error InvalidDecimalConfiguration();
     error ParametersNotSet();
+    error StaleParameters();
 
     // ============ Modifiers ============
 
@@ -102,7 +103,9 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
 
     // ============ Constructor ============
 
-    constructor(address _marketMaker, PrioUpdateRegistry _prioRegistry, uint256 _maxParameterAge) Ownable(msg.sender) {
+    constructor(address _marketMaker, PrioUpdateRegistryV2 _prioRegistry, uint256 _maxParameterAge)
+        Ownable(msg.sender)
+    {
         if (_marketMaker == address(0)) revert InvalidAmount();
         marketMaker = _marketMaker;
         prioRegistry = _prioRegistry;
@@ -160,8 +163,8 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
 
         // Seed initial parameters in the registry (multX/multY default to 0; market maker
         // must publish real values via prioRegistry.updateState before any swap).
-        uint256[] memory slots = _encodeSlots(initialConcentration, 0, 0);
-        prioRegistry.updateState(address(this), uint256(pairId), uint32(block.timestamp), slots);
+        uint256[] memory slots = _encodeSlots(block.timestamp, initialConcentration, 0, 0);
+        prioRegistry.updateState(address(this), uint256(pairId), slots);
 
         return pairId;
     }
@@ -233,7 +236,7 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
 
     /**
      * @notice Swap token X for token Y
-     * @dev Reads latest parameters from PrioUpdateRegistry (top-of-block values)
+     * @dev Reads latest parameters from PrioUpdateRegistryV2 (top-of-block values)
      * @param pairId The pair identifier
      * @param amountXIn Amount of token X to swap
      * @param minAmountYOut Minimum amount of token Y expected (slippage protection)
@@ -272,7 +275,7 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
 
     /**
      * @notice Swap token Y for token X
-     * @dev Reads latest parameters from PrioUpdateRegistry (top-of-block values)
+     * @dev Reads latest parameters from PrioUpdateRegistryV2 (top-of-block values)
      * @param pairId The pair identifier
      * @param amountYIn Amount of token Y to swap
      * @param minAmountXOut Minimum amount of token X expected (slippage protection)
@@ -367,12 +370,13 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
     /**
      * @notice Encode parameters into the slot array expected by the registry
      * @dev Market maker uses these slots to call prioRegistry.updateState() directly for ToB priority.
+     * @param updateTimestamp Timestamp the AMM checks for freshness when reading
      * @param concentration Concentration parameter (1-2000)
      * @param multX Price multiplier for token X
      * @param multY Price multiplier for token Y
      * @return slots Slot array to pass to prioRegistry.updateState()
      */
-    function encodeParameterSlots(uint256 concentration, uint256 multX, uint256 multY)
+    function encodeParameterSlots(uint256 updateTimestamp, uint256 concentration, uint256 multX, uint256 multY)
         external
         pure
         returns (uint256[] memory slots)
@@ -380,7 +384,7 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
         if (concentration < 1 || concentration >= 2000) {
             revert InvalidConcentration();
         }
-        return _encodeSlots(concentration, multX, multY);
+        return _encodeSlots(updateTimestamp, concentration, multX, multY);
     }
 
     // ============ Internal Functions ============
@@ -388,31 +392,33 @@ contract ExamplePropAmm is Ownable, ReentrancyGuard {
     /**
      * @notice Read parameters from the registry, requiring the stored timestamp to be no
      * older than `maxParameterAge` seconds and no newer than the current block.
-     * @dev The registry reverts with `PrioUpdateRegistry.StaleUpdate` if the bounds are violated.
+     * @dev The timestamp is ordinary registry data. This contract enforces the freshness bounds when reading.
      */
     function _readParametersFromRegistry(bytes32 pairId) internal view returns (PairParameters memory params) {
-        // The discarded first return is the stored timestamp; the registry already enforced it
-        // is within `[now - maxParameterAge, now]`, so the AMM has no further use for it.
-        // forge-lint: disable-next-line(unsafe-typecast)
-        // slither-disable-next-line unused-return
-        (, uint256[] memory slots) =
-            prioRegistry.getState(uint256(pairId), uint32(block.timestamp - maxParameterAge), uint32(block.timestamp));
-        if (slots.length < 3) revert ParametersNotSet();
-        params.concentration = slots[0];
-        params.multX = slots[1];
-        params.multY = slots[2];
+        uint256[] memory slots = prioRegistry.getState(uint256(pairId), 4);
+        uint256 updateTimestamp = slots[0];
+        if (updateTimestamp == 0) revert ParametersNotSet();
+        // Comparing application-provided data with the current timestamp is the intended read-side freshness check.
+        // forge-lint: disable-next-line(block-timestamp)
+        if (updateTimestamp > block.timestamp || block.timestamp - updateTimestamp > maxParameterAge) {
+            revert StaleParameters();
+        }
+        params.concentration = slots[1];
+        params.multX = slots[2];
+        params.multY = slots[3];
         return params;
     }
 
-    function _encodeSlots(uint256 concentration, uint256 multX, uint256 multY)
+    function _encodeSlots(uint256 updateTimestamp, uint256 concentration, uint256 multX, uint256 multY)
         internal
         pure
         returns (uint256[] memory slots)
     {
-        slots = new uint256[](3);
-        slots[0] = concentration;
-        slots[1] = multX;
-        slots[2] = multY;
+        slots = new uint256[](4);
+        slots[0] = updateTimestamp;
+        slots[1] = concentration;
+        slots[2] = multX;
+        slots[3] = multY;
     }
 
     /**

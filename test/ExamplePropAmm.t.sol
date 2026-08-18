@@ -3,7 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../src/ExamplePropAmm.sol";
-import "../src/PrioUpdateRegistry.sol";
+import "../src/PrioUpdateRegistryV2.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC20Burnable.sol";
 
 // Mock ERC20 token for testing
@@ -24,7 +24,7 @@ contract MockERC20 is ERC20Burnable {
 }
 
 contract ExamplePropAmmTest is Test {
-    PrioUpdateRegistry public registry;
+    PrioUpdateRegistryV2 public registry;
     ExamplePropAmm public amm;
     MockERC20 public weth;
     MockERC20 public usdc;
@@ -35,8 +35,6 @@ contract ExamplePropAmmTest is Test {
 
     bytes32 public wethUsdcPairId;
 
-    uint256 constant MAX_UPDATE_AGE = 1 hours;
-    uint256 constant MAX_UPDATE_LEAD_TIME = 1 hours;
     uint256 constant MAX_PARAMETER_AGE = 12;
 
     uint256 constant WETH_DECIMALS = 18;
@@ -51,7 +49,7 @@ contract ExamplePropAmmTest is Test {
         weth = new MockERC20("Wrapped Ether", "WETH", 18);
         usdc = new MockERC20("USD Coin", "USDC", 6);
 
-        registry = new PrioUpdateRegistry(MAX_UPDATE_AGE, MAX_UPDATE_LEAD_TIME);
+        registry = new PrioUpdateRegistryV2();
         amm = new ExamplePropAmm(marketMaker, registry, MAX_PARAMETER_AGE);
 
         weth.mint(marketMaker, INITIAL_WETH_LIQUIDITY);
@@ -62,9 +60,19 @@ contract ExamplePropAmmTest is Test {
     }
 
     function _publishParameters(bytes32 pairId, uint256 concentration, uint256 multX, uint256 multY) internal {
-        uint256[] memory slots = amm.encodeParameterSlots(concentration, multX, multY);
+        _publishParametersAt(pairId, block.timestamp, concentration, multX, multY);
+    }
+
+    function _publishParametersAt(
+        bytes32 pairId,
+        uint256 updateTimestamp,
+        uint256 concentration,
+        uint256 multX,
+        uint256 multY
+    ) internal {
+        uint256[] memory slots = amm.encodeParameterSlots(updateTimestamp, concentration, multX, multY);
         vm.prank(marketMaker);
-        registry.updateState(address(amm), uint256(pairId), uint32(block.timestamp), slots);
+        registry.updateState(address(amm), uint256(pairId), slots);
     }
 
     function test_CreatePair() public {
@@ -243,19 +251,61 @@ contract ExamplePropAmmTest is Test {
 
         vm.startPrank(trader);
         weth.approve(address(amm), 1 ether);
-        vm.expectRevert(PrioUpdateRegistry.StaleUpdate.selector);
+        vm.expectRevert(ExamplePropAmm.StaleParameters.selector);
         amm.swapXtoY(wethUsdcPairId, 1 ether, 0);
         vm.stopPrank();
+    }
+
+    function test_FutureParametersRevert() public {
+        vm.prank(marketMaker);
+        wethUsdcPairId = amm.createPair(address(weth), address(usdc), 1, 0, 12);
+
+        _publishParametersAt(wethUsdcPairId, block.timestamp + 1, 1, 4000, 10 ** 12);
+
+        vm.expectRevert(ExamplePropAmm.StaleParameters.selector);
+        amm.getParameters(wethUsdcPairId);
+    }
+
+    function test_ZeroTimestampParametersAreNotSet() public {
+        vm.prank(marketMaker);
+        wethUsdcPairId = amm.createPair(address(weth), address(usdc), 1, 0, 12);
+
+        _publishParametersAt(wethUsdcPairId, 0, 1, 4000, 10 ** 12);
+
+        vm.expectRevert(ExamplePropAmm.ParametersNotSet.selector);
+        amm.getParameters(wethUsdcPairId);
+    }
+
+    function test_ParameterAgeBoundaryIsAccepted() public {
+        vm.prank(marketMaker);
+        wethUsdcPairId = amm.createPair(address(weth), address(usdc), 1, 0, 12);
+
+        _publishParametersAt(wethUsdcPairId, block.timestamp - MAX_PARAMETER_AGE, 2, 3000, 10 ** 12);
+
+        ExamplePropAmm.PairParameters memory params = amm.getParameters(wethUsdcPairId);
+        assertEq(params.concentration, 2);
+        assertEq(params.multX, 3000);
+        assertEq(params.multY, 10 ** 12);
+    }
+
+    function test_EncodeParameterSlotsIncludesTimestamp() public view {
+        uint256[] memory slots = amm.encodeParameterSlots(123, 2, 3000, 10 ** 12);
+
+        assertEq(slots.length, 4);
+        assertEq(slots[0], 123);
+        assertEq(slots[1], 2);
+        assertEq(slots[2], 3000);
+        assertEq(slots[3], 10 ** 12);
     }
 
     function test_UnauthorizedCannotPublishParameters() public {
         vm.prank(marketMaker);
         wethUsdcPairId = amm.createPair(address(weth), address(usdc), 1, 0, 12);
 
-        uint256[] memory slots = amm.encodeParameterSlots(1, 4000, 10 ** 12);
+        uint256[] memory slots = amm.encodeParameterSlots(block.timestamp, 1, 4000, 10 ** 12);
         vm.prank(trader);
-        vm.expectRevert(PrioUpdateRegistry.NotAuthorized.selector);
-        registry.updateState(address(amm), uint256(wethUsdcPairId), uint32(block.timestamp), slots);
+        vm.expectRevert(PrioUpdateRegistryV2.NotAuthorized.selector);
+        registry.updateState(address(amm), uint256(wethUsdcPairId), slots);
     }
 
     function test_SetMarketMakerRotatesUpdater() public {
