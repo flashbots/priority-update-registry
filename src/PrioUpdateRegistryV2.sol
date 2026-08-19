@@ -11,11 +11,16 @@ interface IPrioUpdateDecoder {
     /// @param target The address whose state is being updated.
     /// @param laneIndex The lane to write, scoped to `target`.
     /// @param aux The opaque payload interpreted by the decoder.
+    /// @param trustedCallsHash `keccak256(abi.encode(calls))`.
+    /// @param callResults Ordered call return data.
     /// @return slots The validated slot values to store.
-    function validateAndUnpack(address target, uint256 laneIndex, bytes calldata aux)
-        external
-        view
-        returns (uint256[] memory slots);
+    function validateAndUnpack(
+        address target,
+        uint256 laneIndex,
+        bytes calldata aux,
+        bytes32 trustedCallsHash,
+        bytes[] calldata callResults
+    ) external view returns (uint256[] memory slots);
 }
 
 /// @notice Stores raw per-target state written by authorized updaters or target-selected decoders.
@@ -24,6 +29,11 @@ interface IPrioUpdateDecoder {
 /// own slot layout and validate it when reading. Writes only replace the supplied slot prefix and are
 /// not required to be monotonic.
 contract PrioUpdateRegistryV2 {
+    struct TrustedCall {
+        address target;
+        bytes data;
+    }
+
     event UpdaterAdded(address indexed target, address indexed updater);
     event UpdaterRemoved(address indexed target, address indexed updater);
     event DecoderSet(address indexed target, uint256 indexed laneIndex, address indexed decoder);
@@ -48,6 +58,9 @@ contract PrioUpdateRegistryV2 {
     error ZeroDecoder();
     /// @notice Thrown when `decoder` has no code at registration time.
     error DecoderHasNoCode();
+    error TrustedCallTargetHasNoCode(address target);
+    error UntrustedCallTarget(address target);
+    error CallbackNotAllowed();
 
     /// @notice Maximum number of raw storage words in a lane.
     /// @dev The bound prevents reads or writes from escaping the lane's reserved storage region.
@@ -55,6 +68,11 @@ contract PrioUpdateRegistryV2 {
 
     /// @dev Domain-separates lane storage from Solidity mapping storage and other hashed storage regions.
     bytes32 private constant LANE_NAMESPACE = keccak256("PrioUpdateRegistryV2.lane.v1");
+
+    bytes32 private constant CALLBACK_LOCK_SLOT = keccak256("PrioUpdateRegistryV2.callbackLock");
+
+    address private immutable _trustedCallTarget0;
+    address private immutable _trustedCallTarget1;
 
     /// @notice Tracks whether `updater` is authorized to write state on behalf of `target`.
     /// @dev Each target manages its own set of updaters via `addUpdater` and `removeUpdater`.
@@ -64,10 +82,40 @@ contract PrioUpdateRegistryV2 {
     /// @dev A non-zero decoder marks the lane as decoder-managed and disables direct updater writes.
     mapping(address target => mapping(uint256 laneIndex => address decoder)) public laneDecoder;
 
+    modifier noCallback() {
+        if (_callbackLocked()) revert CallbackNotAllowed();
+        _;
+    }
+
+    modifier withCallbackLock() {
+        if (_callbackLocked()) revert CallbackNotAllowed();
+        _setCallbackLock(true);
+        _;
+        _setCallbackLock(false);
+    }
+
+    /// @param trustedCallTarget0 First trusted call target, or zero if unused.
+    /// @param trustedCallTarget1 Second trusted call target, or zero if unused.
+    constructor(address trustedCallTarget0, address trustedCallTarget1) {
+        if (trustedCallTarget0 != address(0) && trustedCallTarget0.code.length == 0) {
+            revert TrustedCallTargetHasNoCode(trustedCallTarget0);
+        }
+        if (trustedCallTarget1 != address(0) && trustedCallTarget1.code.length == 0) {
+            revert TrustedCallTargetHasNoCode(trustedCallTarget1);
+        }
+        _trustedCallTarget0 = trustedCallTarget0;
+        _trustedCallTarget1 = trustedCallTarget1;
+    }
+
+    /// @notice Returns whether `target` is one of this deployment's trusted call targets.
+    function isTrustedCallTarget(address target) external view returns (bool) {
+        return _isTrustedCallTarget(target);
+    }
+
     /// @notice Authorizes `updater` to write state on behalf of `msg.sender`.
     /// @dev The stored authorization is idempotent. The event is emitted even if `updater` is already authorized.
     /// @param updater The address being granted write authorization.
-    function addUpdater(address updater) external {
+    function addUpdater(address updater) external noCallback {
         isUpdater[msg.sender][updater] = true;
         emit UpdaterAdded(msg.sender, updater);
     }
@@ -75,7 +123,7 @@ contract PrioUpdateRegistryV2 {
     /// @notice Revokes authorization for `updater` to write state on behalf of `msg.sender`.
     /// @dev The stored authorization is idempotent. The event is emitted even if `updater` is not authorized.
     /// @param updater The address whose write authorization is being revoked.
-    function removeUpdater(address updater) external {
+    function removeUpdater(address updater) external noCallback {
         isUpdater[msg.sender][updater] = false;
         emit UpdaterRemoved(msg.sender, updater);
     }
@@ -85,7 +133,7 @@ contract PrioUpdateRegistryV2 {
     /// The code-length check only applies at registration time. A proxy decoder may still change behavior.
     /// @param laneIndex The lane to assign the decoder to, scoped to `msg.sender`.
     /// @param decoder The contract that validates and unpacks updates for the lane.
-    function setDecoder(uint256 laneIndex, address decoder) external {
+    function setDecoder(uint256 laneIndex, address decoder) external noCallback {
         if (decoder == address(0)) revert ZeroDecoder();
         if (decoder.code.length == 0) revert DecoderHasNoCode();
         if (laneDecoder[msg.sender][laneIndex] != address(0)) revert DecoderAlreadySet();
@@ -104,23 +152,48 @@ contract PrioUpdateRegistryV2 {
     /// @param target The address whose state is being updated.
     /// @param laneIndex The lane to write, scoped to `target`.
     /// @param slots The raw slot values to write. Length must be in `[1, 255]`.
-    function updateState(address target, uint256 laneIndex, uint256[] calldata slots) external {
+    function updateState(address target, uint256 laneIndex, uint256[] calldata slots) external noCallback {
         if (!isUpdater[target][msg.sender]) revert NotAuthorized();
         if (laneDecoder[target][laneIndex] != address(0)) revert DecoderBoundLane();
         _writeSlotsCalldata(target, laneIndex, slots);
     }
 
-    /// @notice Validates an opaque payload with the lane's decoder and stores the returned slot values.
+    /// @notice Calls trusted targets, validates their results with the lane's decoder, and stores its slots.
     /// @dev Anyone may relay an update. The decoder is responsible for authorization and all
-    /// application-level validation. It is called with `STATICCALL`; the registry performs the only
-    /// state writes. A shorter decoded update does not clear words left by an earlier longer update.
+    /// application-level validation. Calls and validation are atomic. A shorter decoded update does not
+    /// clear words left by an earlier longer update.
     /// @param target The address whose state is being updated.
     /// @param laneIndex The decoder-managed lane to write, scoped to `target`.
     /// @param aux The opaque payload passed to the lane's decoder.
-    function updateStateWithDecoder(address target, uint256 laneIndex, bytes calldata aux) external {
+    /// @param calls Ordered zero-value calls.
+    function updateStateWithDecoder(address target, uint256 laneIndex, bytes calldata aux, TrustedCall[] calldata calls)
+        external
+        withCallbackLock
+    {
         address decoder = laneDecoder[target][laneIndex];
         if (decoder == address(0)) revert DecoderNotSet();
-        uint256[] memory slots = IPrioUpdateDecoder(decoder).validateAndUnpack(target, laneIndex, aux);
+
+        uint256 callCount = calls.length;
+        for (uint256 i; i < callCount; ++i) {
+            if (!_isTrustedCallTarget(calls[i].target)) revert UntrustedCallTarget(calls[i].target);
+        }
+
+        bytes32 trustedCallsHash = keccak256(abi.encode(calls));
+        bytes[] memory callResults = new bytes[](callCount);
+        for (uint256 i; i < callCount; ++i) {
+            // slither-disable-next-line calls-loop,low-level-calls
+            (bool success, bytes memory result) = calls[i].target.call(calls[i].data);
+            if (!success) {
+                // slither-disable-next-line assembly
+                assembly {
+                    revert(add(result, 0x20), mload(result))
+                }
+            }
+            callResults[i] = result;
+        }
+
+        uint256[] memory slots =
+            IPrioUpdateDecoder(decoder).validateAndUnpack(target, laneIndex, aux, trustedCallsHash, callResults);
         _writeSlotsMemory(target, laneIndex, slots);
     }
 
@@ -132,7 +205,7 @@ contract PrioUpdateRegistryV2 {
     /// @return value The raw stored value.
     // Assembly is used to read the lane's computed storage slot directly.
     // slither-disable-next-line assembly
-    function getSlot(uint256 laneIndex, uint256 slotIndex) external view returns (uint256 value) {
+    function getSlot(uint256 laneIndex, uint256 slotIndex) external view noCallback returns (uint256 value) {
         if (slotIndex >= MAX_SLOTS) revert SlotIndexOutOfRange();
         uint256 slot = _laneBase(msg.sender, laneIndex) + slotIndex;
         assembly {
@@ -149,7 +222,7 @@ contract PrioUpdateRegistryV2 {
     /// @return slots The raw stored slot values.
     // Assembly is used to read each computed storage slot directly.
     // slither-disable-next-line assembly
-    function getState(uint256 laneIndex, uint256 count) external view returns (uint256[] memory slots) {
+    function getState(uint256 laneIndex, uint256 count) external view noCallback returns (uint256[] memory slots) {
         if (count > MAX_SLOTS) revert SlotIndexOutOfRange();
         uint256 base = _laneBase(msg.sender, laneIndex);
         slots = new uint256[](count);
@@ -167,6 +240,24 @@ contract PrioUpdateRegistryV2 {
     /// @dev Slot `i` of the lane is stored at `_laneBase(target, laneIndex) + i` for `0 <= i < 255`.
     function _laneBase(address target, uint256 laneIndex) internal pure returns (uint256) {
         return uint256(keccak256(abi.encode(LANE_NAMESPACE, target, laneIndex)));
+    }
+
+    function _isTrustedCallTarget(address target) internal view returns (bool) {
+        return target != address(0) && (target == _trustedCallTarget0 || target == _trustedCallTarget1);
+    }
+
+    function _callbackLocked() internal view returns (bool locked) {
+        bytes32 slot = CALLBACK_LOCK_SLOT;
+        assembly ("memory-safe") {
+            locked := tload(slot)
+        }
+    }
+
+    function _setCallbackLock(bool locked) internal {
+        bytes32 slot = CALLBACK_LOCK_SLOT;
+        assembly ("memory-safe") {
+            tstore(slot, locked)
+        }
     }
 
     /// @notice Writes calldata slot values verbatim for `target` at `laneIndex`.
