@@ -64,6 +64,7 @@ If multiple valid writes to the same lane land in a block, the last write determ
 ### Reading Priority Updates
 
 - **`getSlot(uint256 laneIndex, uint256 slotIndex) → uint256 value`** — returns one slot from `msg.sender`'s lane. `slotIndex` must be less than 255.
+- **`getSlots(uint256 laneIndex, uint256 slotIndex, uint256 slotCount) → uint256[] slots`** — returns the contiguous range `[slotIndex, slotIndex + slotCount)` from `msg.sender`'s lane. The complete range must fit within the lane's 255 slots.
 - **`getState(uint256 laneIndex, uint256 count) → uint256[] slots`** — returns the first `count` slots from `msg.sender`'s lane. `count` may be between 0 and 255.
 - `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write directly for `target`.
 - `laneDecoder(address target, uint256 laneIndex) → address` — the decoder assigned to a lane, or the zero address if the lane is updater-managed.
@@ -185,7 +186,7 @@ Relayers choose calldata for trusted targets. The allowlist trusts all code reac
 
 ### Registry reads are target-scoped
 
-`getSlot` and `getState` read lanes belonging to `msg.sender`. One contract cannot use these methods to read as another target. Registry storage remains public and can always be inspected offchain.
+`getSlot`, `getSlots`, and `getState` read lanes belonging to `msg.sender`. One contract cannot use these methods to read as another target. Registry storage remains public and can always be inspected offchain.
 
 ## Block Builder Integration
 

@@ -213,6 +213,23 @@ contract PrioUpdateRegistryV2 {
         }
     }
 
+    /// @notice Returns a contiguous range of raw slots from `msg.sender`'s lane.
+    /// @dev Reads are scoped to `msg.sender`. The returned range is
+    /// `[slotIndex, slotIndex + slotCount)`. Unwritten words return zero, and words left by a
+    /// shorter overwrite remain visible. No freshness or application-level validation is performed.
+    /// @param laneIndex The lane to read, scoped to `msg.sender`.
+    /// @param slotIndex The zero-based index of the first slot to return.
+    /// @param slotCount The number of slots to return. The requested range must fit within 255 slots.
+    /// @return slots The requested raw stored slot values.
+    function getSlots(uint256 laneIndex, uint256 slotIndex, uint256 slotCount)
+        external
+        view
+        noCallback
+        returns (uint256[] memory slots)
+    {
+        return _readSlots(msg.sender, laneIndex, slotIndex, slotCount);
+    }
+
     /// @notice Returns the first `count` raw slots from `msg.sender`'s lane.
     /// @dev Reads are scoped to `msg.sender`. The registry does not store a lane length, so the caller
     /// supplies `count`. Unwritten words return zero, and words left by a shorter overwrite remain visible.
@@ -220,13 +237,32 @@ contract PrioUpdateRegistryV2 {
     /// @param laneIndex The lane to read, scoped to `msg.sender`.
     /// @param count The number of slots to return. Must not exceed 255.
     /// @return slots The raw stored slot values.
+    function getState(uint256 laneIndex, uint256 count) external view noCallback returns (uint256[] memory slots) {
+        return _readSlots(msg.sender, laneIndex, 0, count);
+    }
+
+    /// @notice Returns the base storage slot for `target` and `laneIndex`.
+    /// @dev Slot `i` of the lane is stored at `_laneBase(target, laneIndex) + i` for `0 <= i < 255`.
+    function _laneBase(address target, uint256 laneIndex) internal pure returns (uint256) {
+        return uint256(keccak256(abi.encode(LANE_NAMESPACE, target, laneIndex)));
+    }
+
+    /// @notice Reads a contiguous range of raw slots for `target` at `laneIndex`.
+    /// @dev The range check uses subtraction to avoid overflowing `slotIndex + slotCount`.
     // Assembly is used to read each computed storage slot directly.
     // slither-disable-next-line assembly
-    function getState(uint256 laneIndex, uint256 count) external view noCallback returns (uint256[] memory slots) {
-        if (count > MAX_SLOTS) revert SlotIndexOutOfRange();
-        uint256 base = _laneBase(msg.sender, laneIndex);
-        slots = new uint256[](count);
-        for (uint256 i; i < count; ++i) {
+    function _readSlots(address target, uint256 laneIndex, uint256 slotIndex, uint256 slotCount)
+        internal
+        view
+        returns (uint256[] memory slots)
+    {
+        if (slotIndex > MAX_SLOTS || slotCount > MAX_SLOTS - slotIndex) revert SlotIndexOutOfRange();
+
+        slots = new uint256[](slotCount);
+        if (slotCount == 0) return slots;
+
+        uint256 base = _laneBase(target, laneIndex) + slotIndex;
+        for (uint256 i; i < slotCount; ++i) {
             uint256 slot = base + i;
             uint256 value;
             assembly {
@@ -234,12 +270,6 @@ contract PrioUpdateRegistryV2 {
             }
             slots[i] = value;
         }
-    }
-
-    /// @notice Returns the base storage slot for `target` and `laneIndex`.
-    /// @dev Slot `i` of the lane is stored at `_laneBase(target, laneIndex) + i` for `0 <= i < 255`.
-    function _laneBase(address target, uint256 laneIndex) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(LANE_NAMESPACE, target, laneIndex)));
     }
 
     function _isTrustedCallTarget(address target) internal view returns (bool) {

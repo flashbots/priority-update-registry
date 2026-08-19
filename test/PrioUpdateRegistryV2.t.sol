@@ -56,6 +56,14 @@ contract PrioUpdateRegistryV2Test is Test {
         return registry.getState(laneIndex, count);
     }
 
+    function _readRange(address target_, uint256 laneIndex, uint256 slotIndex, uint256 slotCount)
+        internal
+        returns (uint256[] memory slots)
+    {
+        vm.prank(target_);
+        return registry.getSlots(laneIndex, slotIndex, slotCount);
+    }
+
     /*
      * Updaters
      */
@@ -138,6 +146,22 @@ contract PrioUpdateRegistryV2Test is Test {
         assertEq(stored, slots);
     }
 
+    function test_getSlotsReturnsRequestedRange() public {
+        uint256[] memory slots = new uint256[](5);
+        slots[0] = 11;
+        slots[1] = 22;
+        slots[2] = 33;
+        slots[3] = 44;
+        slots[4] = 55;
+        _write(target, updater, 7, slots);
+
+        uint256[] memory stored = _readRange(target, 7, 1, 3);
+        assertEq(stored.length, 3);
+        assertEq(stored[0], 22);
+        assertEq(stored[1], 33);
+        assertEq(stored[2], 44);
+    }
+
     function test_unwrittenSlotsReturnZero() public {
         uint256[] memory stored = _read(target, 9, 3);
         assertEq(stored.length, 3);
@@ -154,6 +178,11 @@ contract PrioUpdateRegistryV2Test is Test {
         assertEq(stored.length, 0);
     }
 
+    function test_getSlotsAllowsEmptyRangeAtLaneEnd() public {
+        uint256[] memory stored = _readRange(target, 0, MAX_SLOTS, 0);
+        assertEq(stored.length, 0);
+    }
+
     function test_readsAreSelfScoped() public {
         _authorize(otherTarget, updater);
 
@@ -167,6 +196,8 @@ contract PrioUpdateRegistryV2Test is Test {
 
         assertEq(_read(target, 0, 1)[0], 111);
         assertEq(_read(otherTarget, 0, 1)[0], 222);
+        assertEq(_readRange(target, 0, 0, 1)[0], 111);
+        assertEq(_readRange(otherTarget, 0, 0, 1)[0], 222);
     }
 
     function test_lanesAreIndependent() public {
@@ -253,6 +284,8 @@ contract PrioUpdateRegistryV2Test is Test {
         _write(target, updater, 0, slots);
 
         assertEq(_read(target, 0, MAX_SLOTS), slots);
+        assertEq(_readRange(target, 0, 0, MAX_SLOTS), slots);
+        assertEq(_readRange(target, 0, MAX_SLOTS - 1, 1)[0], MAX_SLOTS);
     }
 
     function test_getSlotRevertsAtMaximumSlotIndex() public {
@@ -267,6 +300,24 @@ contract PrioUpdateRegistryV2Test is Test {
         registry.getState(0, MAX_SLOTS + 1);
     }
 
+    function test_getSlotsRevertsWhenStartIsPastLaneEnd() public {
+        vm.prank(target);
+        vm.expectRevert(PrioUpdateRegistryV2.SlotIndexOutOfRange.selector);
+        registry.getSlots(0, MAX_SLOTS + 1, 0);
+    }
+
+    function test_getSlotsRevertsWhenRangeExceedsLaneEnd() public {
+        vm.prank(target);
+        vm.expectRevert(PrioUpdateRegistryV2.SlotIndexOutOfRange.selector);
+        registry.getSlots(0, MAX_SLOTS - 1, 2);
+    }
+
+    function test_getSlotsLargeIndexUsesCustomError() public {
+        vm.prank(target);
+        vm.expectRevert(PrioUpdateRegistryV2.SlotIndexOutOfRange.selector);
+        registry.getSlots(0, type(uint256).max, 1);
+    }
+
     function testFuzz_rawWordsRoundTrip(uint256 laneIndex, uint256 first, uint256 second, uint256 third) public {
         uint256[] memory slots = new uint256[](3);
         slots[0] = first;
@@ -275,6 +326,23 @@ contract PrioUpdateRegistryV2Test is Test {
         _write(target, updater, laneIndex, slots);
 
         assertEq(_read(target, laneIndex, 3), slots);
+    }
+
+    function testFuzz_getSlotsReturnsRange(uint256 laneIndex, uint256 slotIndex, uint256 slotCount) public {
+        uint256[] memory slots = new uint256[](8);
+        for (uint256 i; i < slots.length; ++i) {
+            slots[i] = i + 1;
+        }
+        _write(target, updater, laneIndex, slots);
+
+        slotIndex = bound(slotIndex, 0, slots.length);
+        slotCount = bound(slotCount, 0, slots.length - slotIndex);
+        uint256[] memory stored = _readRange(target, laneIndex, slotIndex, slotCount);
+
+        assertEq(stored.length, slotCount);
+        for (uint256 i; i < slotCount; ++i) {
+            assertEq(stored[i], slots[slotIndex + i]);
+        }
     }
 
     /*
@@ -599,7 +667,7 @@ contract PrioUpdateRegistryV2Test is Test {
         _setDecoder(target, 0, address(decoder));
 
         uint256[] memory emptySlots = new uint256[](0);
-        bytes[] memory callbackData = new bytes[](7);
+        bytes[] memory callbackData = new bytes[](8);
         callbackData[0] = abi.encodeCall(PrioUpdateRegistryV2.addUpdater, (updater));
         callbackData[1] = abi.encodeCall(PrioUpdateRegistryV2.removeUpdater, (updater));
         callbackData[2] = abi.encodeCall(PrioUpdateRegistryV2.setDecoder, (1, address(decoder)));
@@ -608,6 +676,7 @@ contract PrioUpdateRegistryV2Test is Test {
             abi.encodeCall(PrioUpdateRegistryV2.updateStateWithDecoder, (target, 0, bytes(""), _noCalls()));
         callbackData[5] = abi.encodeCall(PrioUpdateRegistryV2.getSlot, (0, 0));
         callbackData[6] = abi.encodeCall(PrioUpdateRegistryV2.getState, (0, 0));
+        callbackData[7] = abi.encodeCall(PrioUpdateRegistryV2.getSlots, (0, 0, 0));
 
         PrioUpdateRegistryV2.TrustedCall[] memory calls = new PrioUpdateRegistryV2.TrustedCall[](callbackData.length);
         for (uint256 i; i < calls.length; ++i) {
