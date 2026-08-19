@@ -276,6 +276,8 @@ contract PrioUpdateRegistryV2 {
         return target != address(0) && (target == _trustedCallTarget0 || target == _trustedCallTarget1);
     }
 
+    // Assembly is required because Solidity does not expose transient storage directly.
+    // slither-disable-next-line assembly
     function _callbackLocked() internal view returns (bool locked) {
         bytes32 slot = CALLBACK_LOCK_SLOT;
         assembly ("memory-safe") {
@@ -283,6 +285,8 @@ contract PrioUpdateRegistryV2 {
         }
     }
 
+    // Assembly is required because Solidity does not expose transient storage directly.
+    // slither-disable-next-line assembly
     function _setCallbackLock(bool locked) internal {
         bytes32 slot = CALLBACK_LOCK_SLOT;
         assembly ("memory-safe") {
