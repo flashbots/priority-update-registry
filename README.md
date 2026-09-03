@@ -4,7 +4,7 @@ For the V1 design and documentation, see [`README.v1.md`](README.v1.md).
 
 On-chain registry that allows authorized updaters to publish raw per-target priority updates. Targets (e.g. contracts) can read their current priority update during execution and interpret it according to their own application logic.
 
-Priority updates for the current block are constantly sent to the block builder. The block builder ensures that priority updates for a contract always land in the block before any transaction that interacts with that contract, and that updates for contracts not touched in the block are excluded. The fixed storage layout of this contract ensures that block builders can write an efficient implementation of this functionality. Using a global contract makes it easy for the builder to ensure that direct priority updates only write to registry storage. Decoder updates may call up to two configured contracts.
+Priority updates for the current block are constantly sent to the block builder. The block builder ensures that priority updates for a contract always land in the block before any transaction that interacts with that contract, and that updates for contracts not touched in the block are excluded. The fixed storage layout of this contract ensures that block builders can write an efficient implementation of this functionality. Using a global contract makes it easy for the builder to ensure that priority updates only write to registry storage.
 
 V2 intentionally has no freshness logic. The registry does not know whether a slot contains a timestamp, block number, sequence number, price, or any other value. Targets define their own slot layout and validate freshness and all other application-specific properties when they read it.
 
@@ -28,7 +28,6 @@ With a fixed priority update structure we get these benefits:
 2. The amount of registry write work is determined by the number of slots supplied by the updater or returned by the decoder.
 3. Decoder validation runs under `STATICCALL`, so it cannot introduce external state writes.
 4. Targets can opt into a decoder for authorization or payload validation without adding those rules to the registry.
-5. Decoder updates may call up to two configured contracts before validation.
 
 ## Contract Interface
 
@@ -56,8 +55,8 @@ Writes replace only the supplied prefix of a lane. A shorter write does not clea
 - **`updateState(address target, uint256 laneIndex, uint256[] slots)`**
   Direct write from an authorized updater. `msg.sender` must be authorized for `target`, and the lane must not have a decoder.
 
-- **`updateStateWithDecoder(address target, uint256 laneIndex, bytes aux, TrustedCall[] calls)`**
-  Permissionless relay for a decoder-managed lane. Executes `calls`, validates through the decoder, and stores the returned slots.
+- **`updateStateWithDecoder(address target, uint256 laneIndex, bytes aux)`**
+  Permissionless relay for a decoder-managed lane. Validates through the decoder and stores the returned slots.
 
 If multiple valid writes to the same lane land in a block, the last write determines the value of every slot it supplies.
 
@@ -68,7 +67,6 @@ If multiple valid writes to the same lane land in a block, the last write determ
 - **`getState(uint256 laneIndex, uint256 count) → uint256[] slots`** — returns the first `count` slots from `msg.sender`'s lane. `count` may be between 0 and 255.
 - `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write directly for `target`.
 - `laneDecoder(address target, uint256 laneIndex) → address` — the decoder assigned to a lane, or the zero address if the lane is updater-managed.
-- `isTrustedCallTarget(address target) → bool` — whether decoder updates may call `target` directly.
 
 Unwritten slots return zero. The registry does not return a stored length, timestamp, or freshness result.
 
@@ -81,19 +79,6 @@ Each target manages its own set of updaters. Authorizations are scoped to `msg.s
 
 Updater authorization applies only to lanes without a decoder.
 
-### Trusted Calls
-
-The constructor accepts up to two trusted targets. Zero leaves a position unused; nonzero targets must have code.
-
-```solidity
-struct TrustedCall {
-    address target;
-    bytes data;
-}
-```
-
-Calls execute in order with zero value. The decoder receives their return data and `keccak256(abi.encode(calls))`. Failures, state-changing callbacks, and lane reads revert.
-
 ### Decoder Management
 
 - **`setDecoder(uint256 laneIndex, address decoder)`** — permanently assign a decoder to `msg.sender`'s lane.
@@ -103,19 +88,13 @@ A decoder must have code when it is registered. Once set, it cannot be removed o
 The decoder implements:
 
 ```solidity
-function validateAndUnpack(
-    address target,
-    uint256 laneIndex,
-    bytes calldata aux,
-    bytes32 trustedCallsHash,
-    bytes[] calldata callResults
-)
+function validateAndUnpack(address target, uint256 laneIndex, bytes calldata aux)
     external
     view
     returns (uint256[] memory slots);
 ```
 
-The decoder is responsible for authorization, signatures, replay protection, freshness, payload decoding, and any other validation required by the target. It should bind its authorization to `target` and `laneIndex` where appropriate. Authenticated `aux` must also bind `trustedCallsHash` when calls are used. It must return between 1 and 255 slots.
+The decoder is responsible for authorization, signatures, replay protection, freshness, payload decoding, and any other validation required by the target. It should bind its authorization to `target` and `laneIndex` where appropriate. It must return between 1 and 255 slots.
 
 The registry calls the decoder with `STATICCALL`, so the decoder cannot modify state during validation. A proxy decoder can still change behavior through upgrades even though its registered address is permanent.
 
@@ -150,8 +129,6 @@ value = decoder address, or 0 if no decoder is set
 
 **Callback lock.** Transient slot `keccak256("PrioUpdateRegistryV2.callbackLock")` (EIP-1153).
 
-**Trusted call targets.** Two immutable addresses; no storage slots.
-
 **Lane state storage.** Each `(target, laneIndex)` pair has a domain-separated contiguous range of slots:
 
 ```
@@ -178,11 +155,7 @@ An authorized updater can write any values to every updater-managed lane for its
 
 ### Decoders define their lane's security policy
 
-Anyone can relay `updateStateWithDecoder`. The decoder must authenticate and validate the payload, call hash, and results. A decoder that accepts arbitrary input gives arbitrary callers control over its lane. Decoder addresses are permanent, but proxy decoders may remain upgradeable.
-
-### Trusted targets execute user-selected calldata
-
-Relayers choose calldata for trusted targets. The allowlist trusts all code reachable through those targets, including upgrades and downstream calls.
+Anyone can relay `updateStateWithDecoder`. The decoder must authenticate and validate the payload. A decoder that accepts arbitrary input gives arbitrary callers control over its lane. Decoder addresses are permanent, but proxy decoders may remain upgradeable.
 
 ### Registry reads are target-scoped
 

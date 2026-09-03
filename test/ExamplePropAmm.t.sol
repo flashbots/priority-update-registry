@@ -49,7 +49,7 @@ contract ExamplePropAmmTest is Test {
         weth = new MockERC20("Wrapped Ether", "WETH", 18);
         usdc = new MockERC20("USD Coin", "USDC", 6);
 
-        registry = new PrioUpdateRegistryV2(address(0), address(0));
+        registry = new PrioUpdateRegistryV2();
         amm = new ExamplePropAmm(marketMaker, registry, MAX_PARAMETER_AGE);
 
         weth.mint(marketMaker, INITIAL_WETH_LIQUIDITY);
