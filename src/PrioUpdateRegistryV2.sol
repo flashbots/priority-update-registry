@@ -134,10 +134,7 @@ contract PrioUpdateRegistryV2 {
     /// @param target The address whose state is being updated.
     /// @param laneIndex The decoder-managed lane to write, scoped to `target`.
     /// @param aux The opaque payload passed to the lane's decoder.
-    function updateStateWithDecoder(address target, uint256 laneIndex, bytes calldata aux)
-        external
-        withCallbackLock
-    {
+    function updateStateWithDecoder(address target, uint256 laneIndex, bytes calldata aux) external withCallbackLock {
         address decoder = laneDecoder[target][laneIndex];
         if (decoder == address(0)) revert DecoderNotSet();
 

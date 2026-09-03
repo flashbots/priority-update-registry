@@ -524,11 +524,7 @@ contract PrioUpdateRegistryV2Test is Test {
 }
 
 contract RawDecoder is IPrioUpdateDecoder {
-    function validateAndUnpack(address, uint256, bytes calldata aux)
-        external
-        pure
-        returns (uint256[] memory slots)
-    {
+    function validateAndUnpack(address, uint256, bytes calldata aux) external pure returns (uint256[] memory slots) {
         return abi.decode(aux, (uint256[]));
     }
 }
@@ -548,11 +544,7 @@ contract ArgumentDecoder is IPrioUpdateDecoder {
 contract RevertingDecoder is IPrioUpdateDecoder {
     error Rejected();
 
-    function validateAndUnpack(address, uint256, bytes calldata)
-        external
-        pure
-        returns (uint256[] memory)
-    {
+    function validateAndUnpack(address, uint256, bytes calldata) external pure returns (uint256[] memory) {
         revert Rejected();
     }
 }
@@ -560,10 +552,7 @@ contract RevertingDecoder is IPrioUpdateDecoder {
 contract StateWritingDecoder {
     uint256 public value;
 
-    function validateAndUnpack(address, uint256, bytes calldata)
-        external
-        returns (uint256[] memory slots)
-    {
+    function validateAndUnpack(address, uint256, bytes calldata) external returns (uint256[] memory slots) {
         value = 1;
         slots = new uint256[](1);
         slots[0] = 1;
@@ -577,11 +566,7 @@ contract CallbackDecoder is IPrioUpdateDecoder {
         registry = registry_;
     }
 
-    function validateAndUnpack(address, uint256, bytes calldata)
-        external
-        view
-        returns (uint256[] memory slots)
-    {
+    function validateAndUnpack(address, uint256, bytes calldata) external view returns (uint256[] memory slots) {
         registry.isUpdater(address(this), address(this));
         slots = new uint256[](1);
         slots[0] = 1;
