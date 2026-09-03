@@ -1,57 +1,74 @@
-# PrioUpdateRegistry
+# PrioUpdateRegistry V2
 
-On-chain registry that allows authorized updaters to publish per-target priority updates that are only valid for the current block. Targets (e.g. contracts) can read their current priority update during execution.
+For the V1 design and documentation, see [`README.v1.md`](README.v1.md).
 
-Priority updates for the current block are constantly sent to the block builder. The block builder ensures that priority updates for a contract always land in the block before any transaction that interacts with that contract, and that updates for contracts not touched in the block are excluded. The fixed storage layout of this contract ensures that block builders can write an efficient implementation of this functionality. Using a global contract makes it easy for the builder to ensure the prio updates are not doing anything unexpected (e.g. arbitraging other pools). 
+On-chain registry that allows authorized updaters to publish raw per-target priority updates. Targets (e.g. contracts) can read their current priority update during execution and interpret it according to their own application logic.
+
+Priority updates for the current block are constantly sent to the block builder. The block builder ensures that priority updates for a contract always land in the block before any transaction that interacts with that contract, and that updates for contracts not touched in the block are excluded. The fixed storage layout of this contract ensures that block builders can write an efficient implementation of this functionality. Using a global contract makes it easy for the builder to ensure that priority updates only write to registry storage.
+
+V2 intentionally has no freshness logic. The registry does not know whether a slot contains a timestamp, block number, sequence number, price, or any other value. Targets define their own slot layout and validate freshness and all other application-specific properties when they read it.
 
 ## Motivation
 
 - Priority updates allow any integrated smart contract to set per-block state that will be inserted in the block before any interaction that reads this state.
 - Updates that are not used in the block do not land onchain.
-- An update transaction can only update the state of the registry smart contract. This makes block builder integration easier to reason about. There is no risk for this priority update to be used in an unintended way.
-- One fixed contract design is more scalable and more composable. Because of the defined logic of this update for all smart contracts, it's easy to process updates for many contracts at the same time. Multiple updates from different users can be batched to reduce costs.
+- Direct update transactions only update the state of the registry smart contract. This makes block builder integration easier to reason about.
+- One fixed contract design is more scalable and more composable. Targets remain free to define their own data layout and validation rules.
+- Freshness is application-specific. Removing it from the registry lets targets use timestamps, block numbers, sequence numbers, or no freshness marker at all.
 
 ## Why we propose one priority update registry vs allowing each smart contract to define their own priority update transaction.
 
-An alternative design would be to allow each contract to have their own way to execute priority update. Each contract would send some opaque transaction that must be inserted before anything else that touched their smart contract in the block. 
+An alternative design would be to allow each contract to have its own way to execute priority updates. Each contract would send some opaque transaction that must be inserted before anything else that touched its smart contract in the block.
 
-The main downside of this is the complexity of execution when inserting priority update.
+The main downside of this is the complexity of execution when inserting priority updates.
 
-With fixed priority update structure we get these benefits:
-1. Effect of update on state is know upfront even without full transaction simualtion. 
-2. The cost of doing an update transaction is fixed.
-3. If priority update can execute arbitrary code then updates for different contracts might conflict with each other and it hurts composability. 
-4. There is a risk that priority update can be abused to do something that is not desired by the user of that contract.     
+With a fixed priority update structure we get these benefits:
+
+1. Direct updates have a known and narrow effect: they write raw words to a target's lane in the registry.
+2. The amount of registry write work is determined by the number of slots supplied by the updater or returned by the decoder.
+3. Decoder validation runs under `STATICCALL`, so it cannot introduce external state writes.
+4. Targets can opt into a decoder for authorization or payload validation without adding those rules to the registry.
 
 ## Contract Interface
 
 ### Priority Updates
 
-- Each target manages its own set of authorized updaters; registered updaters must be EOAs (ECDSA signing). A target can additionally authorize itself by signing via [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271), without prior registration (see [Signed Updates and ERC-1271](#signed-updates-and-erc-1271)).
-- A priority update consists of a 27-byte (216-bit) base value plus k additional 32-byte slots. Each additional slot increases the gas cost of an update. The number of slots is stored on-chain (max 255).
-- Each target can have multiple independent **lanes** (identified by `laneIndex`). Updates to different lanes are independent — they land separately and carry their own timestamp.
-- Each update carries an `updateTimestamp` chosen by the writer. Readers supply a `[minTimestamp, maxTimestamp]` window and `getState` reverts if the stored value is outside it.
-- Priority updates can only be read by the target contract itself (via `msg.sender`).
+- Each target can authorize addresses to write raw slot values on its behalf.
+- Each target can have multiple independent **lanes**, identified by `laneIndex`.
+- Each lane contains up to 255 full `uint256` slots. The registry does not reserve a header or interpret any bits.
+- The registry does not store the number of slots in a lane. Readers choose how many slots to read.
+- Priority updates can only be read through the contract interface by the target itself, via `msg.sender`.
+
+Targets can choose either of two write paths for each lane:
+
+- **Updater-managed lane** — an authorized updater writes raw slots directly.
+- **Decoder-managed lane** — the target permanently assigns a decoder that validates an opaque payload and returns the raw slots to store. Anyone can relay the payload.
 
 ### Writing Priority Updates
 
-All write methods require at least one slot (max 255). `slots[0]` must fit in 27 bytes (216 bits), as it is packed into the base storage word alongside the timestamp and slot count. `slots[1..]` are full `uint256` values.
+All write methods require between 1 and 255 slots. Every slot is stored as a full `uint256` value.
 
-The `updateTimestamp` is a `uint32` chosen by the writer and subject to two checks:
+The registry performs no freshness, ordering, monotonicity, or application-level validation. A target that needs a timestamp, block number, or sequence number must include it in its own slot layout and check it when reading.
 
-- It must lie within `[block.timestamp - MAX_UPDATE_AGE, block.timestamp + MAX_UPDATE_LEAD_TIME]` (inclusive); otherwise the call reverts with `InvalidUpdateTimestamp`. `MAX_UPDATE_AGE` and `MAX_UPDATE_LEAD_TIME` are immutable constructor parameters.
-- It must be `>=` the timestamp currently stored for that lane; older writes revert with `StaleUpdate`. Writes with an equal or newer timestamp overwrite the previous value.
+Writes replace only the supplied prefix of a lane. A shorter write does not clear values left by an earlier longer write.
 
-- **`updateState(address target, uint256 laneIndex, uint32 updateTimestamp, uint256[] slots)`**
-  Direct call from the authorized updater (`msg.sender` must match the stored updater for `target`).
+- **`updateState(address target, uint256 laneIndex, uint256[] slots)`**
+  Direct write from an authorized updater. `msg.sender` must be authorized for `target`, and the lane must not have a decoder.
 
-- **`batchUpdateStateWithSignature(SignedUpdate[] updates)`**
-  Batch multiple signed updates in a single transaction. Each element contains `(address target, address signer, uint256 laneIndex, uint32 updateTimestamp, uint256[] slots, bytes signature)`. The signature is verified against `signer` either via ECDSA recovery (EOA) or via ERC-1271 (when `signer == target`). See [Signed Updates and ERC-1271](#signed-updates-and-erc-1271).
+- **`updateStateWithDecoder(address target, uint256 laneIndex, bytes aux)`**
+  Permissionless relay for a decoder-managed lane. Validates through the decoder and stores the returned slots.
+
+If multiple valid writes to the same lane land in a block, the last write determines the value of every slot it supplies.
 
 ### Reading Priority Updates
 
-- **`getState(uint256 laneIndex, uint32 minTimestamp, uint32 maxTimestamp) → (uint32 updateTimestamp, uint256[] slots)`** — called by `target` itself. Reverts `StaleUpdate` if the stored timestamp is outside `[minTimestamp, maxTimestamp]` (inclusive).
-- `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write state for `target`.
+- **`getSlot(uint256 laneIndex, uint256 slotIndex) → uint256 value`** — returns one slot from `msg.sender`'s lane. `slotIndex` must be less than 255.
+- **`getSlots(uint256 laneIndex, uint256 slotIndex, uint256 slotCount) → uint256[] slots`** — returns the contiguous range `[slotIndex, slotIndex + slotCount)` from `msg.sender`'s lane. The complete range must fit within the lane's 255 slots.
+- **`getState(uint256 laneIndex, uint256 count) → uint256[] slots`** — returns the first `count` slots from `msg.sender`'s lane. `count` may be between 0 and 255.
+- `isUpdater(address target, address updater) → bool` — whether `updater` is authorized to write directly for `target`.
+- `laneDecoder(address target, uint256 laneIndex) → address` — the decoder assigned to a lane, or the zero address if the lane is updater-managed.
+
+Unwritten slots return zero. The registry does not return a stored length, timestamp, or freshness result.
 
 ### Updater Management
 
@@ -60,23 +77,39 @@ Each target manages its own set of updaters. Authorizations are scoped to `msg.s
 - `addUpdater(address updater)` — authorize `updater` to write state for `msg.sender`.
 - `removeUpdater(address updater)` — revoke `updater`'s authorization for `msg.sender`.
 
-### Signed Updates and ERC-1271
+Updater authorization applies only to lanes without a decoder.
 
-Each `SignedUpdate` carries an explicit `signer`. Verification dispatches on `signer == target`:
+### Decoder Management
 
-- **`signer != target`** — ECDSA: `ecrecover(digest, signature)` must equal `signer`, and `isUpdater[target][signer]` must be `true`.
-- **`signer == target`** — [ERC-1271](https://eips.ethereum.org/EIPS/eip-1271): `target.isValidSignature(digest, signature)` must return `0x1626ba7e`. No `addUpdater` registration needed — the target authorizes by signing.
+- **`setDecoder(uint256 laneIndex, address decoder)`** — permanently assign a decoder to `msg.sender`'s lane.
 
-Either failure reverts with `NotAuthorized`. Anyone may relay the batch.
+A decoder must have code when it is registered. Once set, it cannot be removed or replaced, and direct updater writes to that lane are disabled.
 
-### EIP-712
+The decoder implements:
 
-- `DOMAIN_SEPARATOR() → bytes32`
-- `UPDATE_TYPEHASH` — `keccak256("UpdateState(address target,uint256 laneIndex,uint32 updateTimestamp,uint256[] slots)")`
+```solidity
+function validateAndUnpack(address target, uint256 laneIndex, bytes calldata aux)
+    external
+    view
+    returns (uint256[] memory slots);
+```
 
-Note: the `signer` field in `SignedUpdate` is **not** part of the typed-data hash. It's claimed by the relayer and either checked against ECDSA recovery (must match) or used as the contract to call `isValidSignature` on (which decides for itself).
+The decoder is responsible for authorization, signatures, replay protection, freshness, payload decoding, and any other validation required by the target. It should bind its authorization to `target` and `laneIndex` where appropriate. It must return between 1 and 255 slots.
 
-Domain name: `"PrioUpdateRegistry"`, version: `"1"`.
+The registry calls the decoder with `STATICCALL`, so the decoder cannot modify state during validation. A proxy decoder can still change behavior through upgrades even though its registered address is permanent.
+
+### Freshness and Application Validation
+
+V2 performs no freshness checks on writes or reads.
+
+A target that needs freshness should store its chosen marker in a slot and validate it every time it reads registry state. For example, a target may store a timestamp in slot 0 and accept it only when:
+
+```solidity
+updateTimestamp <= block.timestamp
+    && block.timestamp - updateTimestamp <= maxUpdateAge
+```
+
+The same pattern can be implemented with block numbers or an application-defined sequence. The registry does not require one convention.
 
 ## Storage Layout
 
@@ -87,89 +120,62 @@ slot = keccak256(abi.encode(updater, keccak256(abi.encode(target, 0))))
 value = 1 if authorized, else 0
 ```
 
-**Lane state storage.** Each (target, laneIndex) pair has a contiguous range of slots:
+**Decoder storage.** `laneDecoder` is a nested mapping at storage slot `1`:
 
 ```
-base = keccak256(abi.encode(target, laneIndex))
-slot[i] = base + i
+slot = keccak256(abi.encode(laneIndex, keccak256(abi.encode(target, 1))))
+value = decoder address, or 0 if no decoder is set
 ```
 
-**Slot 0** (base slot) packs three fields into a single word:
+**Callback lock.** Transient slot `keccak256("PrioUpdateRegistryV2.callbackLock")` (EIP-1153).
+
+**Lane state storage.** Each `(target, laneIndex)` pair has a domain-separated contiguous range of slots:
 
 ```
-[ updateTimestamp (32 bits) | numSlots (8 bits) | slot0 value (216 bits) ]
-  bits 255..224              bits 223..216        bits 215..0
+LANE_NAMESPACE = keccak256("PrioUpdateRegistryV2.lane.v1")
+base = keccak256(abi.encode(LANE_NAMESPACE, target, laneIndex))
+slot[i] = base + i, for 0 <= i < 255
 ```
 
-**Slots 1..k** store raw `uint256` values.
-
-`getState` reverts `StaleUpdate` if the unpacked `updateTimestamp` is outside the caller's window. The `numSlots` field records how many slots were written so `getState` returns exactly that many (and an empty array when no update has ever been written). Different lanes are fully independent — updating one lane does not affect others.
-
-### Collision resistance
-
-Each lane spans up to 255 contiguous slots from a caller-chosen base.
-
-- Lane base: `keccak256(abi.encode(target, laneIndex))`
-- `isUpdater` value: `keccak256(abi.encode(updater, keccak256(abi.encode(target, 0))))`
-
-A collision requires finding a keccak output within 255 of a chosen slot — `≈ 2^248` work. Reduces to keccak preimage/collision resistance.
+Every lane slot stores one raw `uint256`. There is no packed header, timestamp, or stored slot count. The namespace separates lane bases from the registry's mapping storage domains; overlap between independent lane ranges reduces to keccak collision or near-collision resistance.
 
 ## Threat Model
 
 ### Builder selects which update lands
 
-The block builder receives a continuous stream of priority updates for the upcoming block and may insert any one of them. The contract trusts the builder to insert the most recent update it received. Builder bugs or propagation issues can cause a stale (but still within the validity window) update to land instead of the freshest one. The registry cannot distinguish "stale but valid" from "freshest" on-chain.
+The block builder receives a continuous stream of priority updates for the upcoming block and may insert any one of them. The registry does not distinguish the newest update from an older update. Builder bugs, propagation issues, or transaction ordering can cause a different valid write to land or a later write to overwrite an earlier one.
 
-### Target contracts choose their freshness window
+### Targets validate freshness on reads
 
-Targets pick `[minTimestamp, maxTimestamp]` on each `getState` call and the registry enforces it. The write-side `MAX_UPDATE_AGE` / `MAX_UPDATE_LEAD_TIME` bounds are not a substitute.
+The registry accepts raw slot values without checking their age or order. Every target that relies on freshness must encode a timestamp, block number, or other marker and validate it on every read before using the remaining values. Missing, zero, future, and stale markers must be handled by the target's own policy.
 
-### Signed updates are replayable within their window
+### Authorized updaters control raw lane contents
 
-A `SignedUpdate` is not single-use. As long as (a) the update's `updateTimestamp` is `>=` the lane's stored timestamp and (b) `updateTimestamp` still lies within `[block.timestamp - MAX_UPDATE_AGE, block.timestamp + MAX_UPDATE_LEAD_TIME]`, any party can re-relay the signature. A replay produces the same on-chain state as the original write, so it cannot corrupt state.
+An authorized updater can write any values to every updater-managed lane for its target. Removing an updater prevents future writes but does not clear previously written state.
 
-## Gas Costs
+### Decoders define their lane's security policy
 
-Gas costs are measured via `test/GasBenchmark.t.sol`.
+Anyone can relay `updateStateWithDecoder`. The decoder must authenticate and validate the payload. A decoder that accepts arbitrary input gives arbitrary callers control over its lane. Decoder addresses are permanent, but proxy decoders may remain upgradeable.
 
-| Method | Formula |
-|---|---|
-| Direct `updateState` | `21000 + 9712 + k × 5212` |
-| Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 916 + n × (17366 + k × 5235)` |
-| `getState` (warm) | `1524 + k × 269` |
-| `getState` (cold) | `3524 + k × 2269` |
+### Registry reads are target-scoped
 
-Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch. The batched formula is calibrated for ECDSA-signed updates; the ERC-1271 path adds a `staticcall` whose cost depends on the target's `isValidSignature` implementation.
-
-These formulas measure steady-state overwrites on already-initialized storage, which is the benchmark setup used in `test/GasBenchmark.t.sol`. They do not model first writes or cases where a write grows into previously zero slots, which are more expensive because they include zero-to-nonzero `SSTORE`s.
-
-### Comparison: n direct transactions vs 1 batched transaction (k = 0)
-
-| n (updates) | n × direct txs | 1 batched tx | Savings |
-|---|---|---|---|
-| 1 | 30,712 | 39,282 | -27% |
-| 2 | 61,424 | 56,648 | 8% |
-| 5 | 153,560 | 108,746 | 30% |
-| 10 | 307,120 | 195,576 | 37% |
-
-Batching breaks even at ~2 updates and saves increasingly more as n grows.
+`getSlot`, `getSlots`, and `getState` read lanes belonging to `msg.sender`. One contract cannot use these methods to read as another target. Registry storage remains public and can always be inspected offchain.
 
 ## Block Builder Integration
 
-Block builders accept these transactions via special endpoint.
-If another prio update arrives at the block builder, it replaces the previous one. Only one priority update can land in the block and the builder verifies that it's the latest that it received.
+Block builders accept these transactions via a special endpoint. If another priority update arrives at the block builder, it replaces the previous one. Only one priority update for a target and lane should land in the block, and the builder verifies that it is the latest one received.
 
 ### Simulating priority updates inside the block builder
 
-We suggest this approach to applying priority update in the builder.
+We suggest this approach to applying priority updates in the builder.
 
-1. Keep separate "mempool" of unlanded priority updates and maintain it with new updates as they arrive.
+1. Keep a separate "mempool" of unlanded priority updates and maintain it with new updates as they arrive.
 2. Prohibit priority updates from landing in the block except if the builder explicitly inserts them.
-3. After a user transaction is executed, a priority update transaction should be inserted in front of the user transaction.
+3. Before a user transaction is executed, insert the relevant priority update transaction in front of it.
 
 ## Example Integration
 
-[`src/ExamplePropAmm.sol`](src/ExamplePropAmm.sol) is a minimal proprietary AMM that reads its per-pair pricing parameters (`concentration`, `multX`, `multY`) from this registry. The market maker publishes a priority update each block. Swappers read the latest parameters via `getState`, with the registry enforcing a `maxParameterAge` freshness window. Adapted from [fahimahmedx/prop-amm](https://github.com/fahimahmedx/prop-amm), which uses a different top-of-block storage mechanism.
+[`src/ExamplePropAmm.sol`](src/ExamplePropAmm.sol) is a minimal proprietary AMM that reads its per-pair pricing parameters from `PrioUpdateRegistryV2`. The market maker writes `[updateTimestamp, concentration, multX, multY]` as raw lane data. The registry does not interpret the timestamp; the AMM checks that it is not in the future and is no older than `maxParameterAge` whenever it reads the parameters. Adapted from [fahimahmedx/prop-amm](https://github.com/fahimahmedx/prop-amm), which uses a different top-of-block storage mechanism.
 
 ## Testing
 
@@ -179,9 +185,4 @@ just test
 
 ## Deployments
 
-### Ethereum mainnet
-
-- Address: `0xda7afeed01fe625cf15d187a19f94b45f00b8c5f`
-- Constructor: `MAX_UPDATE_AGE = 0`, `MAX_UPDATE_LEAD_TIME = 0`
-- CREATE2 factory: `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7`
-- Salt: `0x0000000000000000000000000000000000000000000000000000012809051083`
+No PrioUpdateRegistry V2 deployments are listed yet.
