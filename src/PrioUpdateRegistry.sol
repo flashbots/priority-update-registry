@@ -31,6 +31,9 @@ contract PrioUpdateRegistry is EIP712 {
     /// @dev Each target manages its own set of updaters via `addUpdater` / `removeUpdater`.
     mapping(address target => mapping(address updater => bool)) public isUpdater;
 
+    /// @notice Domain separator used when deriving the storage base for a lane.
+    bytes32 public constant LANE_STORAGE_NAMESPACE = keccak256("PrioUpdateRegistry.lane");
+
     /// @notice Maximum age (in seconds) by which `updateTimestamp` may lag `block.timestamp` on writes.
     /// @dev A write is accepted iff
     /// `block.timestamp - MAX_UPDATE_AGE <= updateTimestamp <= block.timestamp + MAX_UPDATE_LEAD_TIME`.
@@ -111,7 +114,7 @@ contract PrioUpdateRegistry is EIP712 {
     }
 
     function _laneSlot0Index(address target, uint256 laneIndex) internal pure returns (uint256) {
-        return uint256(keccak256(abi.encode(target, laneIndex)));
+        return uint256(keccak256(abi.encode(LANE_STORAGE_NAMESPACE, target, laneIndex)));
     }
 
     /// @notice Validates and writes a state update for `target` at `laneIndex`.

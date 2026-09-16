@@ -90,7 +90,8 @@ value = 1 if authorized, else 0
 **Lane state storage.** Each (target, laneIndex) pair has a contiguous range of slots:
 
 ```
-base = keccak256(abi.encode(target, laneIndex))
+LANE_STORAGE_NAMESPACE = keccak256("PrioUpdateRegistry.lane")
+base = keccak256(abi.encode(LANE_STORAGE_NAMESPACE, target, laneIndex))
 slot[i] = base + i
 ```
 
@@ -109,7 +110,7 @@ slot[i] = base + i
 
 Each lane spans up to 255 contiguous slots from a caller-chosen base.
 
-- Lane base: `keccak256(abi.encode(target, laneIndex))`
+- Lane base: `keccak256(abi.encode(LANE_STORAGE_NAMESPACE, target, laneIndex))`
 - `isUpdater` value: `keccak256(abi.encode(updater, keccak256(abi.encode(target, 0))))`
 
 A collision requires finding a keccak output within 255 of a chosen slot — `≈ 2^248` work. Reduces to keccak preimage/collision resistance.
@@ -134,10 +135,10 @@ Gas costs are measured via `test/GasBenchmark.t.sol`.
 
 | Method | Formula |
 |---|---|
-| Direct `updateState` | `21000 + 9712 + k × 5212` |
-| Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 916 + n × (17366 + k × 5235)` |
-| `getState` (warm) | `1524 + k × 269` |
-| `getState` (cold) | `3524 + k × 2269` |
+| Direct `updateState` | `21000 + 9698 + k × 5212` |
+| Batched `batchUpdateStateWithSignature` (EOA path) | `21000 + 916 + n × (17396 + k × 5235)` |
+| `getState` (warm) | `1554 + k × 269` |
+| `getState` (cold) | `3554 + k × 2269` |
 
 Where **k** = number of additional slots (beyond the packed slot 0) and **n** = number of updates in the batch. The batched formula is calibrated for ECDSA-signed updates; the ERC-1271 path adds a `staticcall` whose cost depends on the target's `isValidSignature` implementation.
 
@@ -147,10 +148,10 @@ These formulas measure steady-state overwrites on already-initialized storage, w
 
 | n (updates) | n × direct txs | 1 batched tx | Savings |
 |---|---|---|---|
-| 1 | 30,712 | 39,282 | -27% |
-| 2 | 61,424 | 56,648 | 8% |
-| 5 | 153,560 | 108,746 | 30% |
-| 10 | 307,120 | 195,576 | 37% |
+| 1 | 30,698 | 39,312 | -28% |
+| 2 | 61,396 | 56,708 | 8% |
+| 5 | 153,490 | 108,896 | 30% |
+| 10 | 306,980 | 195,876 | 37% |
 
 Batching breaks even at ~2 updates and saves increasingly more as n grows.
 
@@ -180,6 +181,14 @@ just test
 ## Deployments
 
 ### Ethereum mainnet
+
+- Address: `0xda7afeed021eafc1c1af9c362de477dad0396b81`
+- Constructor: `MAX_UPDATE_AGE = 0`, `MAX_UPDATE_LEAD_TIME = 0`
+- CREATE2 factory: `0x914d7Fec6aaC8cd542e72Bca78B30650d45643d7`
+- Salt: `0x000000000000000000000000000000000000000000000000000000a875d1437c`
+- Deployment transaction: `0x48ddb7f4c853525769eca68096354b4d459693a909515a39c82bbe92232b441a`
+
+### Legacy Ethereum mainnet deployment
 
 - Address: `0xda7afeed01fe625cf15d187a19f94b45f00b8c5f`
 - Constructor: `MAX_UPDATE_AGE = 0`, `MAX_UPDATE_LEAD_TIME = 0`

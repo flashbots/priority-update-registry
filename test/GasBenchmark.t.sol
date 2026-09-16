@@ -61,21 +61,21 @@ contract GasBenchmarkTest is Test {
 
     function estimateUpdateGas(uint256 k) internal pure returns (uint256) {
         /// 21000 + A0 + k * A1
-        return 21000 + 9712 + k * 5212;
+        return 21000 + 9698 + k * 5212;
     }
 
     function estimateBatchSigGas(uint256 n, uint256 k) internal pure returns (uint256) {
         /// 21000 + B0 + n*(B1 + k * B2)
-        return 21000 + 916 + n * (17366 + k * 5235);
+        return 21000 + 916 + n * (17396 + k * 5235);
     }
 
     function estimateStateReadCost(bool warm, uint256 k) internal pure returns (uint256) {
         if (warm) {
             /// C0 + C1*k
-            return 1524 + 269 * k;
+            return 1554 + 269 * k;
         } else {
             /// D0 + D1*k
-            return 3524 + 2269 * k;
+            return 3554 + 2269 * k;
         }
     }
 
